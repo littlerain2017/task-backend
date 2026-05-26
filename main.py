@@ -5,7 +5,6 @@ import sqlite3
 import asyncio
 import os
 import random
-import anthropic
 from datetime import datetime, timedelta
 
 app = FastAPI()
@@ -92,14 +91,22 @@ async def random_start(req: RandomStartRequest):
 只返回一个JSON数组，格式如下，不要任何其他文字：
 [{{"goal": "原始目标", "first_step": "具体第一步"}}]"""
 
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        message = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=500,
-            messages=[{"role": "user", "content": prompt}]
-        )
-
-        raw = message.content[0].text.strip()
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": ANTHROPIC_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json"
+                },
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 500,
+                    "messages": [{"role": "user", "content": prompt}]
+                }
+            )
+        data = resp.json()
+        raw = data["content"][0]["text"].strip()
         raw = re.sub(r"^```[a-z]*\n?", "", raw)
         raw = re.sub(r"\n?```$", "", raw)
         steps = json.loads(raw)
