@@ -97,8 +97,11 @@ async def random_start(req: RandomStartRequest):
         messages=[{"role": "user", "content": prompt}]
     )
 
-    import json
-    steps = json.loads(message.content[0].text)
+    import json, re
+    raw = message.content[0].text.strip()
+    raw = re.sub(r"^```[a-z]*\n?", "", raw)
+    raw = re.sub(r"\n?```$", "", raw)
+    steps = json.loads(raw)
     picked = random.choice(steps)
 
     remind_at = (datetime.now() + timedelta(minutes=30)).isoformat()
