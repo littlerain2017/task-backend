@@ -78,8 +78,10 @@ async def submit_tasks(req: TaskRequest):
 
 @app.post("/random-start")
 async def random_start(req: RandomStartRequest):
-    goals_text = "\n".join(f"- {g}" for g in req.goals)
-    prompt = f"""我有以下几件想做的事：
+    import json, re
+    try:
+        goals_text = "\n".join(f"- {g}" for g in req.goals)
+        prompt = f"""我有以下几件想做的事：
 {goals_text}
 
 请为每件事给出一个具体的第一步，要求：
@@ -90,30 +92,31 @@ async def random_start(req: RandomStartRequest):
 只返回一个JSON数组，格式如下，不要任何其他文字：
 [{{"goal": "原始目标", "first_step": "具体第一步"}}]"""
 
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    message = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=500,
-        messages=[{"role": "user", "content": prompt}]
-    )
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        message = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=500,
+            messages=[{"role": "user", "content": prompt}]
+        )
 
-    import json, re
-    raw = message.content[0].text.strip()
-    raw = re.sub(r"^```[a-z]*\n?", "", raw)
-    raw = re.sub(r"\n?```$", "", raw)
-    steps = json.loads(raw)
-    picked = random.choice(steps)
+        raw = message.content[0].text.strip()
+        raw = re.sub(r"^```[a-z]*\n?", "", raw)
+        raw = re.sub(r"\n?```$", "", raw)
+        steps = json.loads(raw)
+        picked = random.choice(steps)
 
-    remind_at = (datetime.now() + timedelta(minutes=30)).isoformat()
-    conn = sqlite3.connect("tasks.db")
-    conn.execute(
-        "INSERT INTO reminders (openid, tasks, remind_at) VALUES (?, ?, ?)",
-        (req.openid, picked["first_step"], remind_at)
-    )
-    conn.commit()
-    conn.close()
+        remind_at = (datetime.now() + timedelta(minutes=30)).isoformat()
+        conn = sqlite3.connect("tasks.db")
+        conn.execute(
+            "INSERT INTO reminders (openid, tasks, remind_at) VALUES (?, ?, ?)",
+            (req.openid, picked["first_step"], remind_at)
+        )
+        conn.commit()
+        conn.close()
 
-    return {"goal": picked["goal"], "first_step": picked["first_step"]}
+        return {"goal": picked["goal"], "first_step": picked["first_step"]}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 async def get_access_token() -> str:
