@@ -13,7 +13,7 @@ APPID = os.environ.get("APPID", "wxd185d88371e9916a")
 APPSECRET = os.environ.get("APPSECRET", "d09c682a57a63790c1fae0f20978a17d")
 TEMPLATE_ID = os.environ.get("TEMPLATE_ID", "wnPOFUCqyZgTiMY7pdHoNgyG65k3VBC38JXLuOfXdZw")
 REMIND_HOURS = float(os.environ.get("REMIND_HOURS", "3"))
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
 
 def init_db():
     conn = sqlite3.connect("tasks.db")
