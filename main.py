@@ -36,6 +36,7 @@ class LoginRequest(BaseModel):
 class TaskRequest(BaseModel):
     openid: str
     tasks: list[str]
+    remind_hours: float = REMIND_HOURS
 
 
 @app.post("/login")
@@ -56,7 +57,7 @@ async def login(req: LoginRequest):
 
 @app.post("/submit-tasks")
 async def submit_tasks(req: TaskRequest):
-    remind_at = (datetime.now() + timedelta(hours=REMIND_HOURS)).isoformat()
+    remind_at = (datetime.now() + timedelta(hours=req.remind_hours)).isoformat()
     tasks_text = "\n".join(req.tasks)
     conn = sqlite3.connect("tasks.db")
     conn.execute(
