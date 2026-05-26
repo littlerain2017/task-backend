@@ -4,6 +4,8 @@ import httpx
 import sqlite3
 import asyncio
 import os
+import random
+import anthropic
 from datetime import datetime, timedelta
 
 app = FastAPI()
@@ -12,6 +14,7 @@ APPID = os.environ.get("APPID", "wxd185d88371e9916a")
 APPSECRET = os.environ.get("APPSECRET", "d09c682a57a63790c1fae0f20978a17d")
 TEMPLATE_ID = os.environ.get("TEMPLATE_ID", "wnPOFUCqyZgTiMY7pdHoNgyG65k3VBC38JXLuOfXdZw")
 REMIND_HOURS = float(os.environ.get("REMIND_HOURS", "3"))
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 def init_db():
     conn = sqlite3.connect("tasks.db")
@@ -37,6 +40,10 @@ class TaskRequest(BaseModel):
     openid: str
     tasks: list[str]
     remind_hours: float = REMIND_HOURS
+
+class RandomStartRequest(BaseModel):
+    openid: str
+    goals: list[str]
 
 
 @app.post("/login")
@@ -66,7 +73,44 @@ async def submit_tasks(req: TaskRequest):
     )
     conn.commit()
     conn.close()
-    return {"message": f"任务已保存，将在{REMIND_HOURS}小时后提醒"}
+    return {"message": f"任务已保存，将在{req.remind_hours}小时后提醒"}
+
+
+@app.post("/random-start")
+async def random_start(req: RandomStartRequest):
+    goals_text = "\n".join(f"- {g}" for g in req.goals)
+    prompt = f"""我有以下几件想做的事：
+{goals_text}
+
+请为每件事给出一个具体的第一步，要求：
+1. 每步只需要20-30分钟就能完成
+2. 非常具体，知道打开什么、做什么、写什么
+3. 足够简单，让人立刻想开始
+
+只返回一个JSON数组，格式如下，不要任何其他文字：
+[{{"goal": "原始目标", "first_step": "具体第一步"}}]"""
+
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    message = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=500,
+        messages=[{"role": "user", "content": prompt}]
+    )
+
+    import json
+    steps = json.loads(message.content[0].text)
+    picked = random.choice(steps)
+
+    remind_at = (datetime.now() + timedelta(minutes=30)).isoformat()
+    conn = sqlite3.connect("tasks.db")
+    conn.execute(
+        "INSERT INTO reminders (openid, tasks, remind_at) VALUES (?, ?, ?)",
+        (req.openid, picked["first_step"], remind_at)
+    )
+    conn.commit()
+    conn.close()
+
+    return {"goal": picked["goal"], "first_step": picked["first_step"]}
 
 
 async def get_access_token() -> str:
