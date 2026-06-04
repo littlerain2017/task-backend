@@ -122,14 +122,14 @@ async def analyze_roles(req: AnalyzeRolesRequest):
         prompt = f"""用户的长期目标是：
 {goal}
 
-请分析这个长期目标背后适合长期扮演的具体角色。角色必须是具体身份或职业倾向，例如：摄影师、写作者、导演、独立研究者、产品设计师、策展人。
+请分析这个长期目标背后适合长期扮演的具体角色。角色必须是具体身份、职业、创作身份或专业实践身份，例如：摄影师、写作者、导演、独立研究者、产品设计师、策展人。
 
 要求：
 1. 返回 3-5 个角色
 2. 每个角色名字不超过 8 个字
-3. 每个角色说明不超过 24 个字
+3. 每个角色说明不超过 32 个字
 4. 说明要强调这个角色如何帮助用户推进长期目标
-5. 不要使用抽象人格词，例如“推进者”“探索员”“执行官”
+5. 不要使用抽象人格词或泛管理身份，例如“推进者”“探索员”“执行官”“执行者”“项目管理者”“项目执行者”“项目制片主任”
 
 只返回 JSON 数组，不要任何其他文字：
 [{{"name": "角色名", "desc": "角色说明"}}]"""
@@ -156,7 +156,11 @@ async def analyze_roles(req: AnalyzeRolesRequest):
         raw = text_block["text"].strip()
         raw = re.sub(r"^```[a-z]*\n?", "", raw)
         raw = re.sub(r"\n?```$", "", raw)
-        roles = json.loads(raw)
+        banned_names = {"推进者", "探索员", "执行官", "执行者", "项目执行者", "项目管理者", "项目制片主任", "管理者"}
+        roles = [
+            role for role in json.loads(raw)
+            if role.get("name") and role.get("desc") and role["name"] not in banned_names
+        ]
         return {"roles": roles}
     except Exception as e:
         return {"error": str(e)}
