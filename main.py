@@ -51,6 +51,11 @@ class FocusBreakdownRequest(BaseModel):
 class AnalyzeRolesRequest(BaseModel):
     longterm_goal: str
 
+class DailyTasksRequest(BaseModel):
+    longterm_goal: str
+    main_quest: str = ""
+    role: str = ""
+
 
 @app.post("/login")
 async def login(req: LoginRequest):
@@ -162,6 +167,65 @@ async def analyze_roles(req: AnalyzeRolesRequest):
             if role.get("name") and role.get("desc") and role["name"] not in banned_names
         ]
         return {"roles": roles}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/daily-tasks")
+async def daily_tasks(req: DailyTasksRequest):
+    import json, re
+    goal = req.longterm_goal.strip()
+    main_quest = req.main_quest.strip()
+    role = req.role.strip()
+    if not goal and not main_quest:
+        return {"error": "长期目标为空"}
+    try:
+        prompt = f"""用户的长期目标：
+{goal or main_quest}
+
+今日主线：
+{main_quest or goal}
+
+今日角色：
+{role or "未设定"}
+
+请把这个长期目标拆成今天可以完成的小任务。
+
+要求：
+1. 返回 3 个任务
+2. 每个任务 15-45 分钟内能完成
+3. 每个任务必须是具体动作，不要抽象建议
+4. 任务要能推进长期目标，而不是泛泛自我管理
+5. 不要包含“制定计划”这种空泛任务，除非任务具体到产出物
+6. 每个任务不超过 28 个字
+
+只返回 JSON 数组，不要任何其他文字：
+["小任务1", "小任务2", "小任务3"]"""
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": ANTHROPIC_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json"
+                },
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 700,
+                    "messages": [{"role": "user", "content": prompt}]
+                }
+            )
+        data = resp.json()
+        text_block = next((b for b in data.get("content", []) if b.get("type") == "text"), None)
+        if not text_block:
+            raise Exception(f"Unexpected response: {data}")
+
+        raw = text_block["text"].strip()
+        raw = re.sub(r"^```[a-z]*\n?", "", raw)
+        raw = re.sub(r"\n?```$", "", raw)
+        tasks = [task for task in json.loads(raw) if isinstance(task, str) and task.strip()]
+        return {"tasks": tasks[:3]}
     except Exception as e:
         return {"error": str(e)}
 
