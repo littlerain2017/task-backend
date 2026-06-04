@@ -180,6 +180,8 @@ async def daily_tasks(req: DailyTasksRequest):
     if not goal and not main_quest:
         return {"error": "长期目标为空"}
     try:
+        has_cjk = any("\u4e00" <= ch <= "\u9fff" for ch in f"{goal}{main_quest}")
+        language_rule = "请用中文返回任务。" if has_cjk else "Return every task in English only."
         prompt = f"""用户的长期目标：
 {goal or main_quest}
 
@@ -198,7 +200,7 @@ async def daily_tasks(req: DailyTasksRequest):
 4. 任务要能推进长期目标，而不是泛泛自我管理
 5. 不要包含“制定计划”这种空泛任务，除非任务具体到产出物
 6. 每个任务不超过 28 个字
-7. 使用和用户长期目标相同的语言；如果长期目标是英文，就返回英文任务
+7. {language_rule}
 
 只返回 JSON 数组，不要任何其他文字：
 ["小任务1", "小任务2", "小任务3"]"""
