@@ -56,6 +56,10 @@ class DailyTasksRequest(BaseModel):
     main_quest: str = ""
     role: str = ""
 
+class CreativeFishboneRequest(BaseModel):
+    task: str
+    thoughts: list[str]
+
 
 @app.post("/login")
 async def login(req: LoginRequest):
@@ -229,6 +233,79 @@ async def daily_tasks(req: DailyTasksRequest):
         raw = re.sub(r"\n?```$", "", raw)
         tasks = [task for task in json.loads(raw) if isinstance(task, str) and task.strip()]
         return {"tasks": tasks[:3]}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/creative-fishbone")
+async def creative_fishbone(req: CreativeFishboneRequest):
+    import json, re
+    task = req.task.strip()
+    thoughts = [thought.strip() for thought in req.thoughts if thought.strip()]
+    if not task:
+        return {"error": "创作任务为空"}
+    try:
+        thoughts_text = "\n".join(f"- {thought}" for thought in thoughts) or "- 暂无散乱想法"
+        prompt = f"""你是一个创作思维整理助手。用户不是在做普通任务管理，而是在围绕一个具体创作任务整理 scattered mind。所有想法默认都服务于这个创作任务，不要把它们当作无关干扰。
+
+创作任务：
+{task}
+
+用户倒出来的想法：
+{thoughts_text}
+
+请把这些想法整理成创作鱼骨图。必须使用以下 6 个分支：
+1. 核心意图：想表达什么、作品为什么存在
+2. 素材/意象：画面、物件、声音、句子、镜头、符号
+3. 结构/顺序：先后、段落、场次、节奏、转折
+4. 情绪/风格：气质、语气、氛围、审美方向
+5. 卡点/疑问：还没确定、需要判断、创作阻塞处
+6. 下一笔：现在立刻可以写、画、剪、试的一小步
+
+要求：
+- 不要泛泛鼓励
+- 不要把想法改写得太官方，要保留用户原本的创作质感
+- 每条 items 尽量短
+- 如果某个分支没有明显材料，可以返回空数组
+- next_action 必须是一个 2-10 分钟内能开始的创作动作
+
+只返回 JSON，不要任何其他文字：
+{{
+  "categories": [
+    {{"id": "intention", "title": "核心意图", "hint": "想表达什么", "items": []}},
+    {{"id": "image", "title": "素材/意象", "hint": "画面、物件、声音", "items": []}},
+    {{"id": "structure", "title": "结构/顺序", "hint": "先后、段落、节奏", "items": []}},
+    {{"id": "tone", "title": "情绪/风格", "hint": "气质、语言、氛围", "items": []}},
+    {{"id": "question", "title": "卡点/疑问", "hint": "还没确定的地方", "items": []}},
+    {{"id": "next", "title": "下一笔", "hint": "立刻能写/画/剪的一步", "items": []}}
+  ],
+  "next_action": "一个具体下一步"
+}}"""
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": ANTHROPIC_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json"
+                },
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 1200,
+                    "messages": [{"role": "user", "content": prompt}]
+                }
+            )
+        data = resp.json()
+        text_block = next((b for b in data.get("content", []) if b.get("type") == "text"), None)
+        if not text_block:
+            raise Exception(f"Unexpected response: {data}")
+
+        raw = text_block["text"].strip()
+        raw = re.sub(r"^```[a-z]*\n?", "", raw)
+        raw = re.sub(r"\n?```$", "", raw)
+        result = json.loads(raw)
+        return result
     except Exception as e:
         return {"error": str(e)}
 
