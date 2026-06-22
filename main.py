@@ -60,6 +60,13 @@ class CreativeFishboneRequest(BaseModel):
     task: str
     thoughts: list[str]
 
+class WorkClarifyRequest(BaseModel):
+    work_title: str = ""
+    outline: str = ""
+    updates: list[str] = []
+    new_material: str
+    current_task: str = ""
+
 
 @app.post("/login")
 async def login(req: LoginRequest):
@@ -306,6 +313,76 @@ async def creative_fishbone(req: CreativeFishboneRequest):
         raw = re.sub(r"\n?```$", "", raw)
         result = json.loads(raw)
         return result
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/work-clarify")
+async def work_clarify(req: WorkClarifyRequest):
+    import json, re
+    new_material = req.new_material.strip()
+    if not new_material:
+        return {"error": "新增想法为空"}
+    try:
+        updates_text = "\n".join(f"- {item.strip()}" for item in req.updates if item.strip()) or "- 暂无更新"
+        prompt = f"""你是一个创作编辑和结构助手。用户正在做一个具体作品，所有新增想法都默认服务于这个作品。你的任务不是评价好坏，而是帮用户把新增想法放进已有作品结构里，理清它应该影响哪里。
+
+作品名：
+{req.work_title.strip() or "未命名作品"}
+
+当前创作任务：
+{req.current_task.strip() or "未指定"}
+
+已有大纲：
+{req.outline.strip() or "暂无大纲"}
+
+历史 work update：
+{updates_text}
+
+这次新增想法：
+{new_material}
+
+请基于已有大纲和更新，整理这条新增想法。要求：
+1. placement: 说明它最适合放在作品的哪里，例如人物、场景、章节、主题、某一幕、某条线索
+2. impact: 说明它会改变/加强作品的什么
+3. conflicts: 如果它和已有大纲有冲突或需要警惕，列出来；没有就空数组
+4. outline_patch: 给出 2-5 条可以追加到大纲里的短句
+5. next_action: 给一个 2-10 分钟内能做的创作动作
+6. questions: 给 1-3 个真正有助于继续写的追问
+
+只返回 JSON，不要任何其他文字：
+{{
+  "placement": "它应该放在哪里",
+  "impact": "它影响什么",
+  "conflicts": [],
+  "outline_patch": [],
+  "next_action": "具体下一步",
+  "questions": []
+}}"""
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": ANTHROPIC_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json"
+                },
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 1200,
+                    "messages": [{"role": "user", "content": prompt}]
+                }
+            )
+        data = resp.json()
+        text_block = next((b for b in data.get("content", []) if b.get("type") == "text"), None)
+        if not text_block:
+            raise Exception(f"Unexpected response: {data}")
+
+        raw = text_block["text"].strip()
+        raw = re.sub(r"^```[a-z]*\n?", "", raw)
+        raw = re.sub(r"\n?```$", "", raw)
+        return json.loads(raw)
     except Exception as e:
         return {"error": str(e)}
 
