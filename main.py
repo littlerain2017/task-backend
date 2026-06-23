@@ -5,6 +5,7 @@ import sqlite3
 import asyncio
 import os
 import random
+import json
 from datetime import datetime, timedelta
 
 app = FastAPI()
@@ -24,6 +25,20 @@ def init_db():
             tasks TEXT NOT NULL,
             remind_at TEXT NOT NULL,
             sent INTEGER DEFAULT 0
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS work_contexts (
+            openid TEXT PRIMARY KEY,
+            work_title TEXT DEFAULT '',
+            outline TEXT DEFAULT '',
+            new_material TEXT DEFAULT '',
+            clarity_result TEXT DEFAULT '',
+            long_story_text TEXT DEFAULT '',
+            long_story_result TEXT DEFAULT '',
+            updates TEXT DEFAULT '',
+            current_task TEXT DEFAULT '',
+            updated_at TEXT NOT NULL
         )
     """)
     conn.commit()
@@ -74,6 +89,20 @@ class LongStoryAnalyzeRequest(BaseModel):
     work_title: str = ""
     text: str
     current_task: str = ""
+
+class WorkContextSaveRequest(BaseModel):
+    openid: str
+    work_title: str = ""
+    outline: str = ""
+    new_material: str = ""
+    clarity_result: dict | None = None
+    long_story_text: str = ""
+    long_story_result: dict | None = None
+    updates: list[dict] = []
+    current_task: str = ""
+
+class WorkContextLoadRequest(BaseModel):
+    openid: str
 
 
 async def ask_claude_json(prompt: str, max_tokens: int = 1200):
@@ -537,6 +566,93 @@ async def analyze_long_story(req: LongStoryAnalyzeRequest):
         return result
     except Exception as e:
         return {"error": str(e)}
+
+
+@app.post("/work-context/save")
+async def save_work_context(req: WorkContextSaveRequest):
+    openid = req.openid.strip()
+    if not openid:
+        return {"error": "openid 为空"}
+
+    updated_at = datetime.now().isoformat()
+    conn = sqlite3.connect("tasks.db")
+    conn.execute(
+        """
+        INSERT INTO work_contexts (
+            openid, work_title, outline, new_material, clarity_result,
+            long_story_text, long_story_result, updates, current_task, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(openid) DO UPDATE SET
+            work_title = excluded.work_title,
+            outline = excluded.outline,
+            new_material = excluded.new_material,
+            clarity_result = excluded.clarity_result,
+            long_story_text = excluded.long_story_text,
+            long_story_result = excluded.long_story_result,
+            updates = excluded.updates,
+            current_task = excluded.current_task,
+            updated_at = excluded.updated_at
+        """,
+        (
+            openid,
+            req.work_title,
+            req.outline,
+            req.new_material,
+            json.dumps(req.clarity_result or {}, ensure_ascii=False),
+            req.long_story_text,
+            json.dumps(req.long_story_result or {}, ensure_ascii=False),
+            json.dumps(req.updates or [], ensure_ascii=False),
+            req.current_task,
+            updated_at,
+        )
+    )
+    conn.commit()
+    conn.close()
+    return {"message": "作品档案已保存", "updated_at": updated_at}
+
+
+@app.post("/work-context/load")
+async def load_work_context(req: WorkContextLoadRequest):
+    openid = req.openid.strip()
+    if not openid:
+        return {"error": "openid 为空"}
+
+    conn = sqlite3.connect("tasks.db")
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        """
+        SELECT work_title, outline, new_material, clarity_result,
+               long_story_text, long_story_result, updates, current_task, updated_at
+        FROM work_contexts
+        WHERE openid = ?
+        """,
+        (openid,)
+    ).fetchone()
+    conn.close()
+
+    if not row:
+        return {"context": None}
+
+    def parse_json_field(value, fallback):
+        try:
+            return json.loads(value) if value else fallback
+        except json.JSONDecodeError:
+            return fallback
+
+    return {
+        "context": {
+            "work_title": row["work_title"] or "",
+            "outline": row["outline"] or "",
+            "new_material": row["new_material"] or "",
+            "clarity_result": parse_json_field(row["clarity_result"], {}),
+            "long_story_text": row["long_story_text"] or "",
+            "long_story_result": parse_json_field(row["long_story_result"], {}),
+            "updates": parse_json_field(row["updates"], []),
+            "current_task": row["current_task"] or "",
+            "updated_at": row["updated_at"] or "",
+        }
+    }
 
 
 @app.post("/random-start")
