@@ -59,6 +59,9 @@ class DailyTasksRequest(BaseModel):
 class CreativeFishboneRequest(BaseModel):
     task: str
     thoughts: list[str]
+    work_title: str = ""
+    outline: str = ""
+    updates: list[str] = []
 
 class WorkClarifyRequest(BaseModel):
     work_title: str = ""
@@ -324,7 +327,17 @@ async def creative_fishbone(req: CreativeFishboneRequest):
         return {"error": "创作任务为空"}
     try:
         thoughts_text = "\n".join(f"- {thought}" for thought in thoughts) or "- 暂无散乱想法"
+        updates_text = "\n".join(f"- {item.strip()}" for item in req.updates if item.strip()) or "- 暂无更新"
         prompt = f"""你是一个故事编辑和故事结构可视化助手。用户不是在做普通任务管理，也不是在整理无关干扰；用户的 scattered mind 基本都围绕同一个创作任务，所有想法默认都服务于这个故事/作品。
+
+作品名：
+{req.work_title.strip() or "未命名作品"}
+
+已有大纲：
+{req.outline.strip() or "暂无大纲"}
+
+历史 work update：
+{updates_text}
 
 创作任务：
 {task}
