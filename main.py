@@ -67,6 +67,42 @@ class WorkClarifyRequest(BaseModel):
     new_material: str
     current_task: str = ""
 
+class LongStoryAnalyzeRequest(BaseModel):
+    work_title: str = ""
+    text: str
+    current_task: str = ""
+
+
+async def ask_claude_json(prompt: str, max_tokens: int = 1200):
+    import json, re
+    async with httpx.AsyncClient(timeout=45) as client:
+        resp = await client.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json"
+            },
+            json={
+                "model": "claude-haiku-4-5-20251001",
+                "max_tokens": max_tokens,
+                "messages": [{"role": "user", "content": prompt}]
+            }
+        )
+    data = resp.json()
+    text_block = next((b for b in data.get("content", []) if b.get("type") == "text"), None)
+    if not text_block:
+        raise Exception(f"Unexpected response: {data}")
+    raw = text_block["text"].strip()
+    raw = re.sub(r"^```[a-z]*\n?", "", raw)
+    raw = re.sub(r"\n?```$", "", raw)
+    return json.loads(raw)
+
+
+def chunk_text(text: str, size: int = 6000):
+    cleaned = text.strip()
+    return [cleaned[i:i + size] for i in range(0, len(cleaned), size)]
+
 
 @app.post("/login")
 async def login(req: LoginRequest):
@@ -386,6 +422,71 @@ async def work_clarify(req: WorkClarifyRequest):
         raw = re.sub(r"^```[a-z]*\n?", "", raw)
         raw = re.sub(r"\n?```$", "", raw)
         return json.loads(raw)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/analyze-long-story")
+async def analyze_long_story(req: LongStoryAnalyzeRequest):
+    text = req.text.strip()
+    if not text:
+        return {"error": "文本为空"}
+    if len(text) > 120000:
+        return {"error": "文本过长，请先上传 12 万字以内的版本或分卷分析"}
+    try:
+        chunks = chunk_text(text, 6000)
+        chunk_summaries = []
+        for index, chunk in enumerate(chunks[:20]):
+            prompt = f"""你是故事结构分析助手。下面是长篇作品《{req.work_title.strip() or "未命名作品"}》的第 {index + 1}/{len(chunks)} 段文本。
+
+请只基于这一段提取故事结构信息，不要复述原文。
+
+文本：
+{chunk}
+
+返回 JSON：
+{{
+  "events": ["这一段发生的关键事件，最多5条"],
+  "characters": ["出现的人物及关系/动机变化，最多5条"],
+  "world_images": ["地点、物件、意象、氛围，最多5条"],
+  "tensions": ["冲突、秘密、危险、悬念，最多5条"],
+  "questions": ["这一段留下的问题或伏笔，最多5条"]
+}}"""
+            chunk_summaries.append(await ask_claude_json(prompt, 1100))
+
+        summaries_text = "\n".join(
+            f"段落 {i + 1}: {summary}"
+            for i, summary in enumerate(chunk_summaries)
+        )
+        final_prompt = f"""你是故事编辑。下面是长篇作品《{req.work_title.strip() or "未命名作品"}》分段提取出的结构信息。
+
+当前分析目的：
+{req.current_task.strip() or "拆解整体故事线"}
+
+分段信息：
+{summaries_text}
+
+请汇总成一张“故事地图”，重点是帮助作者看清故事线，而不是复述全文。
+
+返回 JSON：
+{{
+  "overview": "一句话概括故事主线",
+  "storylines": [
+    {{"name": "故事线名称", "beats": ["关键推进点"]}}
+  ],
+  "characters": [
+    {{"name": "人物名", "role": "叙事功能/关系/欲望"}}
+  ],
+  "timeline": ["按顺序列出关键事件"],
+  "tensions": ["主要冲突、秘密、悬念"],
+  "motifs": ["反复出现的意象/主题"],
+  "open_questions": ["仍未解决的问题"],
+  "next_action": "作者接下来 2-10 分钟能做的具体动作"
+}}"""
+        result = await ask_claude_json(final_prompt, 1800)
+        result["chunk_count"] = len(chunks)
+        result["analyzed_chunk_count"] = len(chunk_summaries)
+        return result
     except Exception as e:
         return {"error": str(e)}
 
