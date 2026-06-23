@@ -102,8 +102,36 @@ async def ask_claude_json(prompt: str, max_tokens: int = 1200):
         start = raw.find("{")
         if start == -1:
             raise
-        parsed, _ = json.JSONDecoder().raw_decode(raw[start:])
-        return parsed
+        try:
+            parsed, _ = json.JSONDecoder().raw_decode(raw[start:])
+            return parsed
+        except json.JSONDecodeError:
+            repair_prompt = f"""把下面内容修复成合法 JSON。不要解释，不要 markdown，只返回合法 JSON。
+
+原内容：
+{raw}"""
+            async with httpx.AsyncClient(timeout=30) as client:
+                repair_resp = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": ANTHROPIC_API_KEY,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json"
+                    },
+                    json={
+                        "model": "claude-haiku-4-5-20251001",
+                        "max_tokens": max_tokens,
+                        "messages": [{"role": "user", "content": repair_prompt}]
+                    }
+                )
+            repair_data = repair_resp.json()
+            repaired = next((b for b in repair_data.get("content", []) if b.get("type") == "text"), None)
+            if not repaired:
+                raise
+            repaired_raw = repaired["text"].strip()
+            repaired_raw = re.sub(r"^```[a-z]*\n?", "", repaired_raw)
+            repaired_raw = re.sub(r"\n?```$", "", repaired_raw)
+            return json.loads(repaired_raw)
 
 
 def chunk_text(text: str, size: int = 6000):
