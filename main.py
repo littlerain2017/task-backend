@@ -96,7 +96,14 @@ async def ask_claude_json(prompt: str, max_tokens: int = 1200):
     raw = text_block["text"].strip()
     raw = re.sub(r"^```[a-z]*\n?", "", raw)
     raw = re.sub(r"\n?```$", "", raw)
-    return json.loads(raw)
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        start = raw.find("{")
+        if start == -1:
+            raise
+        parsed, _ = json.JSONDecoder().raw_decode(raw[start:])
+        return parsed
 
 
 def chunk_text(text: str, size: int = 6000):
