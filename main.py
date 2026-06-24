@@ -36,6 +36,7 @@ def init_db():
             clarity_result TEXT DEFAULT '',
             long_story_text TEXT DEFAULT '',
             long_story_result TEXT DEFAULT '',
+            character_result TEXT DEFAULT '',
             updates TEXT DEFAULT '',
             story_refs TEXT DEFAULT '',
             current_task TEXT DEFAULT '',
@@ -44,6 +45,10 @@ def init_db():
     """)
     try:
         conn.execute("ALTER TABLE work_contexts ADD COLUMN story_refs TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute("ALTER TABLE work_contexts ADD COLUMN character_result TEXT DEFAULT ''")
     except sqlite3.OperationalError:
         pass
     conn.commit()
@@ -95,6 +100,12 @@ class LongStoryAnalyzeRequest(BaseModel):
     text: str
     current_task: str = ""
 
+class CharacterFishboneRequest(BaseModel):
+    work_title: str = ""
+    text: str
+    focus_character: str = ""
+    current_task: str = ""
+
 class WorkContextSaveRequest(BaseModel):
     openid: str
     work_title: str = ""
@@ -103,6 +114,7 @@ class WorkContextSaveRequest(BaseModel):
     clarity_result: dict | None = None
     long_story_text: str = ""
     long_story_result: dict | None = None
+    character_result: dict | None = None
     updates: list[dict] = []
     story_refs: list[dict] = []
     current_task: str = ""
@@ -574,6 +586,87 @@ async def analyze_long_story(req: LongStoryAnalyzeRequest):
         return {"error": str(e)}
 
 
+@app.post("/character-fishbone")
+async def character_fishbone(req: CharacterFishboneRequest):
+    text = req.text.strip()
+    if not text:
+        return {"error": "文本为空"}
+    if len(text) > 120000:
+        return {"error": "文本过长，请先上传 12 万字以内的版本或分卷分析"}
+
+    try:
+        chunks = chunk_text(text, 6000)
+        chunk_notes = []
+        for index, chunk in enumerate(chunks[:20]):
+            prompt = f"""你是故事编辑。下面是作品《{req.work_title.strip() or "未命名作品"}》的第 {index + 1}/{len(chunks)} 段文本。
+
+目标：只提取人物信息，不要复述原文，不要长篇引用。
+
+如果用户指定主角，请优先关注：
+{req.focus_character.strip() or "未指定，自动判断最核心主角"}
+
+文本：
+{chunk}
+
+返回 JSON：
+{{
+  "characters": [
+    {{"name": "人物名", "role": "叙事功能", "traits": ["特点"], "experiences": ["经历/压力"], "desire": "想要什么"}}
+  ],
+  "main_character_clues": ["主角相关线索"],
+  "writing_intent_clues": ["作者为什么这样写这个人物的线索"]
+}}"""
+            chunk_notes.append(await ask_claude_json(prompt, 1200))
+
+        notes_text = "\n".join(
+            f"段落 {i + 1}: {note}"
+            for i, note in enumerate(chunk_notes)
+        )
+        final_prompt = f"""你是一个故事编辑和人物弧线分析助手。下面是作品《{req.work_title.strip() or "未命名作品"}》分段提取出的人物信息。
+
+用户当前创作目的：
+{req.current_task.strip() or "把正在阅读的作品变成创作参照"}
+
+用户指定主角：
+{req.focus_character.strip() or "未指定，请自动选择最核心主角"}
+
+分段人物信息：
+{notes_text}
+
+请生成“人物鱼骨图”。重点不是剧情复述，而是让作者看清：主要人物是谁、主角是什么样的人、经历了什么、作者为什么这样写，以及这对自己的创作有什么提醒。
+
+要求：
+- 保持分析短、清楚、有创作价值
+- 不要引用长段原文
+- “写作意图”要从叙事功能推断：为什么让这个人物这样欲望、受伤、失败、转变
+- “对我创作的提醒”必须能帮助用户回到自己的作品
+- fishbone 必须是数组，每个分支 title + items
+
+只返回 JSON：
+{{
+  "main_character": "主角名",
+  "thesis": "一句话概括这个主角的核心",
+  "major_characters": [
+    {{"name": "人物名", "function": "这个人物在故事中做什么"}}
+  ],
+  "fishbone": [
+    {{"title": "主角特点", "items": []}},
+    {{"title": "核心欲望", "items": []}},
+    {{"title": "经历/创伤", "items": []}},
+    {{"title": "关系压力", "items": []}},
+    {{"title": "转变轨迹", "items": []}},
+    {{"title": "写作意图", "items": []}},
+    {{"title": "对我创作的提醒", "items": []}}
+  ],
+  "return_move": "用户接下来 2-10 分钟能做的一个人物写作动作",
+  "chunk_count": {len(chunks)},
+  "analyzed_chunk_count": {len(chunk_notes)}
+}}"""
+        return await ask_claude_json(final_prompt, 1800)
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.post("/work-context/save")
 async def save_work_context(req: WorkContextSaveRequest):
     openid = req.openid.strip()
@@ -586,9 +679,9 @@ async def save_work_context(req: WorkContextSaveRequest):
         """
         INSERT INTO work_contexts (
             openid, work_title, outline, new_material, clarity_result,
-            long_story_text, long_story_result, updates, story_refs, current_task, updated_at
+            long_story_text, long_story_result, character_result, updates, story_refs, current_task, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(openid) DO UPDATE SET
             work_title = excluded.work_title,
             outline = excluded.outline,
@@ -596,6 +689,7 @@ async def save_work_context(req: WorkContextSaveRequest):
             clarity_result = excluded.clarity_result,
             long_story_text = excluded.long_story_text,
             long_story_result = excluded.long_story_result,
+            character_result = excluded.character_result,
             updates = excluded.updates,
             story_refs = excluded.story_refs,
             current_task = excluded.current_task,
@@ -609,6 +703,7 @@ async def save_work_context(req: WorkContextSaveRequest):
             json.dumps(req.clarity_result or {}, ensure_ascii=False),
             req.long_story_text,
             json.dumps(req.long_story_result or {}, ensure_ascii=False),
+            json.dumps(req.character_result or {}, ensure_ascii=False),
             json.dumps(req.updates or [], ensure_ascii=False),
             json.dumps(req.story_refs or [], ensure_ascii=False),
             req.current_task,
@@ -631,7 +726,7 @@ async def load_work_context(req: WorkContextLoadRequest):
     row = conn.execute(
         """
         SELECT work_title, outline, new_material, clarity_result,
-               long_story_text, long_story_result, updates, story_refs, current_task, updated_at
+               long_story_text, long_story_result, character_result, updates, story_refs, current_task, updated_at
         FROM work_contexts
         WHERE openid = ?
         """,
@@ -656,6 +751,7 @@ async def load_work_context(req: WorkContextLoadRequest):
             "clarity_result": parse_json_field(row["clarity_result"], {}),
             "long_story_text": row["long_story_text"] or "",
             "long_story_result": parse_json_field(row["long_story_result"], {}),
+            "character_result": parse_json_field(row["character_result"], {}),
             "updates": parse_json_field(row["updates"], []),
             "story_refs": parse_json_field(row["story_refs"], []),
             "current_task": row["current_task"] or "",
