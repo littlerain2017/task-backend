@@ -37,6 +37,7 @@ def init_db():
             long_story_text TEXT DEFAULT '',
             long_story_result TEXT DEFAULT '',
             character_result TEXT DEFAULT '',
+            my_characters TEXT DEFAULT '',
             updates TEXT DEFAULT '',
             story_refs TEXT DEFAULT '',
             current_task TEXT DEFAULT '',
@@ -49,6 +50,10 @@ def init_db():
         pass
     try:
         conn.execute("ALTER TABLE work_contexts ADD COLUMN character_result TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute("ALTER TABLE work_contexts ADD COLUMN my_characters TEXT DEFAULT ''")
     except sqlite3.OperationalError:
         pass
     conn.commit()
@@ -115,6 +120,7 @@ class WorkContextSaveRequest(BaseModel):
     long_story_text: str = ""
     long_story_result: dict | None = None
     character_result: dict | None = None
+    my_characters: list[dict] = []
     updates: list[dict] = []
     story_refs: list[dict] = []
     current_task: str = ""
@@ -679,9 +685,9 @@ async def save_work_context(req: WorkContextSaveRequest):
         """
         INSERT INTO work_contexts (
             openid, work_title, outline, new_material, clarity_result,
-            long_story_text, long_story_result, character_result, updates, story_refs, current_task, updated_at
+            long_story_text, long_story_result, character_result, my_characters, updates, story_refs, current_task, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(openid) DO UPDATE SET
             work_title = excluded.work_title,
             outline = excluded.outline,
@@ -690,6 +696,7 @@ async def save_work_context(req: WorkContextSaveRequest):
             long_story_text = excluded.long_story_text,
             long_story_result = excluded.long_story_result,
             character_result = excluded.character_result,
+            my_characters = excluded.my_characters,
             updates = excluded.updates,
             story_refs = excluded.story_refs,
             current_task = excluded.current_task,
@@ -704,6 +711,7 @@ async def save_work_context(req: WorkContextSaveRequest):
             req.long_story_text,
             json.dumps(req.long_story_result or {}, ensure_ascii=False),
             json.dumps(req.character_result or {}, ensure_ascii=False),
+            json.dumps(req.my_characters or [], ensure_ascii=False),
             json.dumps(req.updates or [], ensure_ascii=False),
             json.dumps(req.story_refs or [], ensure_ascii=False),
             req.current_task,
@@ -726,7 +734,7 @@ async def load_work_context(req: WorkContextLoadRequest):
     row = conn.execute(
         """
         SELECT work_title, outline, new_material, clarity_result,
-               long_story_text, long_story_result, character_result, updates, story_refs, current_task, updated_at
+               long_story_text, long_story_result, character_result, my_characters, updates, story_refs, current_task, updated_at
         FROM work_contexts
         WHERE openid = ?
         """,
@@ -752,6 +760,7 @@ async def load_work_context(req: WorkContextLoadRequest):
             "long_story_text": row["long_story_text"] or "",
             "long_story_result": parse_json_field(row["long_story_result"], {}),
             "character_result": parse_json_field(row["character_result"], {}),
+            "my_characters": parse_json_field(row["my_characters"], []),
             "updates": parse_json_field(row["updates"], []),
             "story_refs": parse_json_field(row["story_refs"], []),
             "current_task": row["current_task"] or "",
