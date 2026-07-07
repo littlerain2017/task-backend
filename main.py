@@ -967,3 +967,131 @@ async def reminder_loop():
 @app.on_event("startup")
 async def startup():
     asyncio.create_task(reminder_loop())
+
+
+# ==================== 写作进度（writing-progress 小程序，多用户） ====================
+import re
+import time as time_mod
+from fastapi.responses import PlainTextResponse
+from writing_logic import build_daily, normalize_files
+
+WRITING_APPID = os.environ.get("WRITING_APPID", "wxff2f10ce15321b4a")
+WRITING_APPSECRET = os.environ.get("WRITING_APPSECRET", "af1333432c29946412e52b37c805d836")
+WRITING_ENV = os.environ.get("WRITING_ENV", "cloud1-d8gpsjp7i273e1044")
+WRITING_MIN_INTERVAL_SECONDS = 3  # 同一令牌两次上报的最小间隔
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+_writing_token = {"value": "", "expires_at": 0.0}
+_writing_last_report_at = {}
+
+
+class WritingReportRequest(BaseModel):
+    token: str
+    date: str
+    files: list
+
+
+async def writing_access_token() -> str:
+    if _writing_token["value"] and time_mod.time() < _writing_token["expires_at"]:
+        return _writing_token["value"]
+    async with httpx.AsyncClient() as client:
+        resp = await client.post("https://api.weixin.qq.com/cgi-bin/stable_token", json={
+            "grant_type": "client_credential",
+            "appid": WRITING_APPID,
+            "secret": WRITING_APPSECRET,
+        })
+    data = resp.json()
+    if "access_token" not in data:
+        raise RuntimeError(f"获取 access_token 失败: {data}")
+    _writing_token["value"] = data["access_token"]
+    _writing_token["expires_at"] = time_mod.time() + data.get("expires_in", 7200) - 300
+    return _writing_token["value"]
+
+
+async def writing_db(action: str, query: str) -> dict:
+    data = {}
+    for attempt in (1, 2):
+        token = await writing_access_token()
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"https://api.weixin.qq.com/tcb/{action}?access_token={token}",
+                json={"env": WRITING_ENV, "query": query},
+            )
+        data = resp.json()
+        if data.get("errcode") == 40001 and attempt == 1:
+            _writing_token["value"] = ""  # token 失效，换新重试一次
+            continue
+        break
+    if data.get("errcode") != 0:
+        raise RuntimeError(f"{action} 失败: {data.get('errmsg')}")
+    return data
+
+
+async def writing_query_doc(collection: str, doc_id: str):
+    q = f'db.collection("{collection}").where({{_id:{json.dumps(doc_id)}}}).get()'
+    rows = (await writing_db("databasequery", q)).get("data", [])
+    return json.loads(rows[0]) if rows else None
+
+
+async def writing_upsert(collection: str, doc_id: str, doc: dict):
+    q = (f'db.collection("{collection}").where({{_id:{json.dumps(doc_id)}}})'
+         f'.update({{data:{json.dumps(doc, ensure_ascii=False)}}})')
+    data = await writing_db("databaseupdate", q)
+    if data.get("matched", 0) == 0:
+        add_q = (f'db.collection("{collection}")'
+                 f'.add({{data:{json.dumps({"_id": doc_id, **doc}, ensure_ascii=False)}}})')
+        await writing_db("databaseadd", add_q)
+
+
+@app.post("/writing/report")
+async def writing_report(req: WritingReportRequest):
+    now = time_mod.time()
+    if now - _writing_last_report_at.get(req.token, 0) < WRITING_MIN_INTERVAL_SECONDS:
+        return {"ok": False, "error": "上报太频繁，稍后自动重试"}
+    _writing_last_report_at[req.token] = now
+
+    if not DATE_RE.match(req.date):
+        return {"ok": False, "error": "日期格式应为 YYYY-MM-DD"}
+    try:
+        counts = normalize_files(req.files)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+
+    try:
+        # 令牌 → openid
+        q = f'db.collection("devices").where({{token:{json.dumps(req.token)}}}).limit(1).get()'
+        rows = (await writing_db("databasequery", q)).get("data", [])
+        if not rows:
+            return {"ok": False, "error": "无效令牌，请在小程序「连接电脑」页重新获取"}
+        uid = json.loads(rows[0]).get("_openid", "")
+        if not uid:
+            return {"ok": False, "error": "令牌未绑定用户"}
+
+        now_ms = int(now * 1000)
+        daily_id = f"{uid}:{req.date}"
+        daily = build_daily(uid, req.date, counts, await writing_query_doc("daily", daily_id), now_ms)
+        await writing_upsert("daily", daily_id, daily)
+
+        for name, c in counts.items():
+            await writing_upsert("files", f"{uid}:{name}", {
+                "uid": uid, "name": name, "cjk": c["cjk"], "en": c["en"], "updatedAt": now_ms,
+            })
+
+        # 清理该用户已删除文件的残留
+        list_q = f'db.collection("files").where({{uid:{json.dumps(uid)}}}).limit(1000).field({{_id:true}}).get()'
+        cloud_ids = {json.loads(r)["_id"] for r in (await writing_db("databasequery", list_q)).get("data", [])}
+        for stale in cloud_ids - {f"{uid}:{n}" for n in counts}:
+            del_q = f'db.collection("files").where({{_id:{json.dumps(stale)}}}).remove()'
+            await writing_db("databasedelete", del_q)
+
+        return {"ok": True, "deltaCjk": daily["deltaCjk"]}
+    except RuntimeError as e:
+        print(f"[writing] 上报失败: {e}")
+        return {"ok": False, "error": "服务器内部错误，稍后自动重试"}
+
+
+@app.get("/writing/watcher.py")
+async def writing_watcher_script():
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "watcher_client.py")
+    with open(script, encoding="utf-8") as f:
+        return PlainTextResponse(f.read(), media_type="text/x-python")
