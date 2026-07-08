@@ -4,93 +4,307 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>写作 · THE ROOM</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600&family=Cormorant+Garamond:wght@500;600&display=swap" rel="stylesheet">
 <style>
   :root {
-    --ink: #F5F7FA;
-    --ink-soft: rgba(245,247,250,.75);
-    --muted: rgba(245,247,250,.5);
-    --accent: #FFD100;
-    --hairline: rgba(245,247,250,.2);
+    --bg: #171512;
+    --header: rgba(23, 21, 18, 0.82);
+    --ink: #e9e2d3;
+    --ink-soft: #cfc6b2;
+    --muted: #8a8172;
+    --gold: #d3b25c;
+    --gold-bright: #e8cd85;
+    --green: #7d9c6a;
+    --red: #c96a5a;
+    --line: rgba(233, 226, 211, 0.12);
+    --gold-line: rgba(211, 178, 92, 0.18);
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { height: 100%; }
   body {
-    background: #000;
+    background: var(--bg);
     color: var(--ink);
-    font-family: "Songti SC", "Noto Serif SC", Georgia, serif;
+    font-family: "Noto Serif SC", "Songti SC", Georgia, serif;
     display: flex;
     flex-direction: column;
     align-items: center;
+    transition: background 0.4s;
   }
-  /* 阅读学：中文每行 36~40 字最舒适，内容列统一限宽居中 */
-  header, .statusbar, #editor {
-    width: 100%;
-    max-width: 680px;
-  }
+  ::selection { background: rgba(211, 178, 92, 0.28); }
+  ::-webkit-scrollbar { width: 10px; }
+  ::-webkit-scrollbar-thumb { background: #2e2a24; border-radius: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+
+  /* ===== 吸顶栏 ===== */
   header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    background: var(--header);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border-bottom: 1px solid rgba(211, 178, 92, 0.10);
+  }
+  .header-inner {
+    width: 100%;
+    max-width: 860px;
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 12px 16px 10px;
-    border-bottom: 1px solid var(--hairline);
+    gap: 14px;
+    padding: 16px 24px;
   }
-  .kicker { font-size: 12px; letter-spacing: .35em; color: var(--accent); white-space: nowrap; }
-  #docSelect {
-    flex: 1;
-    min-width: 0;
-    background: transparent;
-    color: var(--ink);
-    border: 1px solid var(--hairline);
-    border-radius: 8px;
-    padding: 6px 8px;
-    font-family: inherit;
-    font-size: 14px;
-  }
-  #docSelect option { color: #000; }
-  .btn {
-    background: transparent;
-    color: var(--muted);
-    border: 1px solid var(--hairline);
-    border-radius: 8px;
-    padding: 6px 10px;
-    font-family: inherit;
-    font-size: 13px;
+  .wordmark {
+    font-family: "Cormorant Garamond", Georgia, serif;
+    font-weight: 600;
+    font-size: 19px;
+    letter-spacing: 0.32em;
+    color: var(--gold);
     white-space: nowrap;
   }
-  .statusbar {
+  .doc-box {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    max-width: 320px;
+    flex: 1;
+    background: rgba(255, 255, 255, 0.035);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    transition: border-color 0.2s;
+    position: relative;
+  }
+  .doc-box:hover { border-color: rgba(211, 178, 92, 0.4); }
+  #docSelect {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 100%;
+    background: transparent;
+    color: var(--ink);
+    border: none;
+    outline: none;
+    font-family: inherit;
+    font-size: 14.5px;
+    padding: 8px 30px 8px 14px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    overflow: hidden;
+    cursor: pointer;
+  }
+  #docSelect option { color: #000; }
+  .doc-box::after {
+    content: "▾";
+    position: absolute;
+    right: 12px;
+    color: var(--muted);
+    font-size: 10px;
+    pointer-events: none;
+  }
+  .actions { display: flex; gap: 8px; margin-left: auto; }
+  .btn {
+    font-family: inherit;
+    font-size: 13.5px;
+    color: #beb5a2;
+    background: transparent;
+    border: 1px solid rgba(233, 226, 211, 0.14);
+    border-radius: 8px;
+    padding: 8px 14px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.2s;
+  }
+  .btn:hover { color: var(--gold-bright); border-color: rgba(211, 178, 92, 0.45); }
+
+  /* ===== 元信息条 ===== */
+  .meta {
+    width: 100%;
+    max-width: 860px;
+    padding: 20px 24px 0;
     display: flex;
     justify-content: space-between;
     align-items: baseline;
     gap: 12px;
-    padding: 10px 16px 6px;
-    font-size: 12px;
-    letter-spacing: 0.02em;
+    font-size: 13px;
     color: var(--muted);
+    letter-spacing: 0.02em;
+    flex-wrap: wrap;
   }
-  .counts b { color: var(--accent); font-weight: 700; font-variant-numeric: tabular-nums; }
-  #syncState { text-align: right; }
-  #syncState.ok { color: var(--accent); }
-  #syncState.err { color: #FF6B5B; }
+  .meta b { color: var(--gold); font-weight: 500; }
+  .meta .dot-sep { opacity: 0.5; margin: 0 6px; }
+  .sync { display: flex; align-items: center; gap: 8px; }
+  .sync-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--muted);
+    display: inline-block;
+    transition: background 0.3s;
+  }
+  .sync-dot.ok { background: var(--green); }
+  .sync-dot.busy { background: var(--gold); }
+  .sync-dot.err { background: var(--red); }
+  .sync .today { color: var(--gold); }
+  #syncText.err { color: var(--red); }
+
+  /* ===== 编辑器 ===== */
   #editor {
-    flex: 1;
+    width: 100%;
+    max-width: var(--measure, 760px);
+    padding: 48px 24px 45vh;
+    font-size: var(--font-size, 19px);
+    line-height: 2.05;
+    letter-spacing: 0.02em;
+    color: var(--ink);
+    caret-color: var(--gold);
+    outline: none;
+    text-wrap: pretty;
+    word-break: break-word;
+  }
+  #editor .line { margin: 0 0 1.6em; text-indent: 2em; transition: opacity 0.45s ease; }
+  #editor .line.h1 {
+    font-size: 1.35em;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-indent: 0;
+    margin-bottom: 0.6em;
+  }
+  #editor .line.h2 {
+    font-size: 1.12em;
+    font-weight: 500;
+    color: var(--ink-soft);
+    text-indent: 0;
+    margin-bottom: 1.2em;
+  }
+  #editor .line.rule {
+    text-indent: 0;
+    text-align: center;
+    color: #55503f;
+    letter-spacing: 0.5em;
+    margin: 2.2em 0;
+  }
+  #editor .line.blank { margin: 0 0 1.6em; text-indent: 0; }
+  #editor.focus-on .line.dim { opacity: 0.28; }
+  #editor[contenteditable="false"] { color: var(--muted); }
+
+  /* ===== 计时器胶囊 ===== */
+  .timer {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--gold-line);
+    border-radius: 999px;
+    padding: 8px 10px 8px 16px;
+  }
+  .timer .mode {
+    font-family: inherit;
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    color: var(--muted);
     background: transparent;
     border: none;
-    outline: none;
-    resize: none;
-    color: var(--ink);
-    caret-color: var(--accent);
-    font-family: inherit;
-    /* 中文长文：17~19px 自适应、行距 1.95、字距微松 */
-    font-size: clamp(16px, 15px + 0.4vw, 19px);
-    line-height: 1.95;
-    letter-spacing: 0.03em;
-    padding: 16px 20px calc(32px + env(safe-area-inset-bottom));
+    cursor: pointer;
+    padding: 0;
   }
-  #editor:disabled { color: var(--muted); }
+  .timer .mode:hover { color: var(--gold-bright); }
+  .timer .clock {
+    font-size: 16px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    min-width: 52px;
+    text-align: center;
+    color: #beb5a2;
+  }
+  .timer .clock.running { color: var(--gold-bright); }
+  .timer .clock.done { color: var(--green); }
+  .timer .today-min { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+  .timer .run {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    border: 1px solid rgba(211, 178, 92, 0.4);
+    background: rgba(211, 178, 92, 0.12);
+    color: var(--gold);
+    font-size: 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s;
+  }
+  .timer .run:hover { background: rgba(211, 178, 92, 0.25); }
+  .timer .reset {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .timer .reset:hover { color: var(--gold-bright); }
+
+  /* 底部渐隐 */
+  .fade {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    pointer-events: none;
+    height: 90px;
+    background: linear-gradient(to top, var(--bg), transparent);
+    transition: background 0.4s;
+  }
+
+  /* ===== 设置面板 ===== */
+  #prefs {
+    position: fixed;
+    top: 64px;
+    right: 16px;
+    z-index: 30;
+    width: 250px;
+    background: var(--header);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--gold-line);
+    border-radius: 12px;
+    padding: 18px;
+    display: none;
+    flex-direction: column;
+    gap: 16px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  #prefs.open { display: flex; }
+  #prefs .row { display: flex; flex-direction: column; gap: 8px; }
+  #prefs .row-title { letter-spacing: 0.1em; font-size: 12px; }
+  .tones { display: flex; gap: 8px; }
+  .tone {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 1px solid var(--line);
+    cursor: pointer;
+  }
+  .tone.active { border-color: var(--gold); box-shadow: 0 0 0 2px rgba(211, 178, 92, 0.3); }
+  #prefs input[type="range"] { width: 100%; accent-color: var(--gold); }
+  .switch { display: flex; justify-content: space-between; align-items: center; color: var(--ink-soft); }
+
+  /* ===== 令牌配置浮层 ===== */
   #setup {
     position: fixed;
     inset: 0;
-    background: rgba(0,0,0,.92);
+    background: rgba(13, 12, 10, 0.94);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -98,87 +312,270 @@
     gap: 16px;
     padding: 32px;
     text-align: center;
-    z-index: 10;
+    z-index: 40;
   }
   #setup.hidden { display: none; }
-  #setup h1 { font-size: 18px; letter-spacing: .2em; }
-  #setup p { font-size: 13px; color: var(--muted); line-height: 1.8; }
+  #setup h1 {
+    font-family: "Cormorant Garamond", Georgia, serif;
+    font-size: 20px;
+    letter-spacing: 0.32em;
+    color: var(--gold);
+  }
+  #setup p { font-size: 13px; color: var(--muted); line-height: 1.9; }
   #tokenInput {
     width: 100%;
     max-width: 380px;
     background: transparent;
-    border: 1px dashed var(--hairline);
+    border: 1px dashed var(--gold-line);
     border-radius: 10px;
-    color: var(--accent);
+    color: var(--gold);
     font-family: inherit;
     font-size: 16px;
     text-align: center;
     padding: 12px;
+    outline: none;
   }
-  #setup .btn { color: var(--accent); border-color: var(--accent); padding: 10px 28px; }
+  #setup .btn { color: var(--gold); border-color: rgba(211, 178, 92, 0.45); padding: 10px 28px; }
+
+  @media (max-width: 560px) {
+    .header-inner { padding: 12px 14px; gap: 8px; }
+    .wordmark { font-size: 15px; letter-spacing: 0.22em; }
+    .btn { padding: 7px 10px; font-size: 12.5px; }
+    .meta { padding: 16px 16px 0; }
+    #editor { padding: 32px 16px 45vh; }
+    .timer { bottom: 14px; right: 12px; gap: 9px; padding: 7px 8px 7px 13px; }
+  }
 </style>
 </head>
 <body>
   <div id="setup">
-    <h1>THE ROOM · 写作</h1>
+    <h1>THE ROOM</h1>
     <p>粘贴小程序「连接电脑」页里的配对令牌。<br>这里编辑的是你电脑写作文件夹里的同一批文件，双向同步。</p>
     <input id="tokenInput" placeholder="WRT-XXXXXXXX" autocomplete="off">
     <button class="btn" onclick="saveToken()">开始写作</button>
   </div>
 
   <header>
-    <span class="kicker">THE ROOM</span>
-    <select id="docSelect" onchange="openDoc(this.value)"></select>
-    <button class="btn" onclick="newDoc()">新建</button>
-    <button class="btn" onclick="copyDoc()">复制</button>
-    <button class="btn" onclick="editToken()">令牌</button>
+    <div class="header-inner">
+      <div class="wordmark">THE ROOM</div>
+      <div class="doc-box"><select id="docSelect" onchange="openDoc(this.value)"></select></div>
+      <div class="actions">
+        <button class="btn" onclick="newDoc()">新建</button>
+        <button class="btn" onclick="copyDoc()">复制</button>
+        <button class="btn" onclick="editToken()">令牌</button>
+        <button class="btn" onclick="togglePrefs()">Aa</button>
+      </div>
+    </div>
   </header>
-  <div class="statusbar">
-    <span class="counts">中文 <b id="cjkCount">0</b> 字 · 英文 <b id="enCount">0</b> 词 · 写作 <b id="activeTime">0 分钟</b></span>
-    <span id="syncState">加载中…</span>
+
+  <div class="meta">
+    <div>中文 <b id="cjkCount">0</b> 字 <span class="dot-sep">·</span> 英文 <b id="enCount">0</b> 词</div>
+    <div class="sync">
+      <span class="sync-dot" id="syncDot"></span>
+      <span id="syncText">加载中…</span>
+      <span class="dot-sep">·</span>
+      <span class="today" id="todayDelta">今日 0 字</span>
+    </div>
   </div>
-  <textarea id="editor" placeholder="选择上方文件开始写…" oninput="onEdit()"></textarea>
+
+  <main id="editor" contenteditable="true" spellcheck="false"></main>
+
+  <div class="timer">
+    <button class="mode" id="timerMode" onclick="toggleMode()" title="切换 番茄 / 正计时">番茄</button>
+    <span class="clock" id="timerClock">25:00</span>
+    <span class="today-min" id="todayMin">今日 0 分</span>
+    <button class="run" id="timerRun" onclick="toggleRun()">▶</button>
+    <button class="reset" onclick="resetTimer()" title="重置">↺</button>
+  </div>
+
+  <div class="fade"></div>
+
+  <div id="prefs">
+    <div class="row">
+      <span class="row-title">色调</span>
+      <div class="tones" id="toneRow"></div>
+    </div>
+    <div class="row">
+      <span class="row-title">字号 <span id="fontSizeVal">19</span>px</span>
+      <input type="range" min="16" max="24" step="1" id="fontSizeRange" oninput="setPref('fontSize', +this.value)">
+    </div>
+    <div class="row">
+      <span class="row-title">行宽 <span id="measureVal">760</span>px</span>
+      <input type="range" min="600" max="960" step="20" id="measureRange" oninput="setPref('measure', +this.value)">
+    </div>
+    <div class="switch">
+      <span>专注模式</span>
+      <input type="checkbox" id="focusToggle" onchange="setPref('focus', this.checked)" style="accent-color: var(--gold);">
+    </div>
+  </div>
 
 <script>
 const CJK_RE = /[一-鿿]/g;
 const EN_RE = /[A-Za-z]+(?:'[A-Za-z]+)?/g;
 const SAVE_DEBOUNCE_MS = 4000;
 const REFRESH_MS = 20000;
+const TYPING_IDLE_MS = 60000;
+const POMODORO_SEC = 1500;
 
-const TYPING_IDLE_MS = 60000;  // 打字间隔超过 1 分钟不计入写作时长
+const TONES = {
+  "暖黑":   { bg: "#171512", header: "rgba(23,21,18,0.82)",  ink: "#e9e2d3" },
+  "纯黑":   { bg: "#0d0c0b", header: "rgba(13,12,11,0.82)",  ink: "#e6e1d6" },
+  "墨绿":   { bg: "#141a16", header: "rgba(20,26,22,0.82)",  ink: "#e4e6d9" },
+  "藏蓝":   { bg: "#13161d", header: "rgba(19,22,29,0.82)",  ink: "#e2e4e6" },
+  "咖啡褐": { bg: "#1b1512", header: "rgba(27,21,18,0.82)",  ink: "#ecdfd0" },
+};
 
 let token = localStorage.getItem("writing_token") || "";
 let docList = [];
-let current = null;     // {name, updatedAt, readonly}
+let current = null;
 let dirty = false;
 let saveTimer = null;
 let serverActiveMs = 0;
 let pendingActiveMs = Number(localStorage.getItem("writing_pending_active") || 0);
 let lastKeyTs = 0;
+let prefs = Object.assign(
+  { tone: "暖黑", fontSize: 19, measure: 760, focus: true },
+  JSON.parse(localStorage.getItem("writing_prefs") || "{}")
+);
 
 const $ = (id) => document.getElementById(id);
+const editor = $("editor");
 
-function setSync(text, cls) {
-  $("syncState").textContent = text;
-  $("syncState").className = cls || "";
+/* ===== 阅读舒适度 ===== */
+function applyPrefs() {
+  const t = TONES[prefs.tone] || TONES["暖黑"];
+  const r = document.documentElement.style;
+  r.setProperty("--bg", t.bg);
+  r.setProperty("--header", t.header);
+  r.setProperty("--ink", t.ink);
+  r.setProperty("--font-size", prefs.fontSize + "px");
+  r.setProperty("--measure", prefs.measure + "px");
+  editor.classList.toggle("focus-on", prefs.focus);
+  if (!prefs.focus) editor.querySelectorAll(".line.dim").forEach((n) => n.classList.remove("dim"));
+  $("fontSizeVal").textContent = prefs.fontSize;
+  $("measureVal").textContent = prefs.measure;
+  $("fontSizeRange").value = prefs.fontSize;
+  $("measureRange").value = prefs.measure;
+  $("focusToggle").checked = prefs.focus;
+  document.querySelectorAll(".tone").forEach((el) =>
+    el.classList.toggle("active", el.dataset.tone === prefs.tone));
 }
 
+function setPref(key, val) {
+  prefs[key] = val;
+  localStorage.setItem("writing_prefs", JSON.stringify(prefs));
+  applyPrefs();
+}
+
+function togglePrefs() { $("prefs").classList.toggle("open"); }
+document.addEventListener("click", (e) => {
+  if (!$("prefs").contains(e.target) && !e.target.closest(".actions")) $("prefs").classList.remove("open");
+});
+
+Object.keys(TONES).forEach((name) => {
+  const el = document.createElement("div");
+  el.className = "tone";
+  el.dataset.tone = name;
+  el.title = name;
+  el.style.background = TONES[name].bg;
+  el.onclick = () => setPref("tone", name);
+  $("toneRow").appendChild(el);
+});
+
+/* ===== 逐行渲染编辑器 ===== */
+function classify(text) {
+  if (/^---+\s*$/.test(text)) return "rule";
+  if (/^#\s/.test(text)) return "h1";
+  if (/^#{2,}\s/.test(text)) return "h2";
+  if (text.trim() === "") return "blank";
+  return "";
+}
+
+function setEditorContent(text) {
+  editor.innerHTML = "";
+  const frag = document.createDocumentFragment();
+  text.split("\n").forEach((lineText) => {
+    const div = document.createElement("div");
+    div.className = ("line " + classify(lineText)).trim();
+    if (lineText === "") div.appendChild(document.createElement("br"));
+    else div.textContent = lineText;
+    frag.appendChild(div);
+  });
+  if (!text) {
+    const div = document.createElement("div");
+    div.className = "line blank";
+    div.appendChild(document.createElement("br"));
+    frag.appendChild(div);
+  }
+  editor.appendChild(frag);
+}
+
+function getEditorContent() {
+  const lines = [];
+  editor.childNodes.forEach((node) => {
+    if (node.nodeType === Node.TEXT_NODE) lines.push(node.textContent);
+    else lines.push(node.textContent.replace(/\n/g, ""));
+  });
+  return lines.join("\n");
+}
+
+function reclassify() {
+  editor.childNodes.forEach((node) => {
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    const cls = ("line " + classify(node.textContent)).trim();
+    const keepDim = node.classList.contains("dim") ? " dim" : "";
+    if (node.className !== cls + keepDim) node.className = cls + keepDim;
+  });
+}
+
+editor.addEventListener("paste", (e) => {
+  e.preventDefault();
+  const text = (e.clipboardData || window.clipboardData).getData("text/plain");
+  document.execCommand("insertText", false, text);
+});
+
+/* ===== 专注模式 ===== */
+function applyFocus() {
+  if (!prefs.focus) return;
+  const sel = document.getSelection();
+  let block = null;
+  if (sel && sel.anchorNode && editor.contains(sel.anchorNode) && document.activeElement === editor) {
+    let n = sel.anchorNode;
+    while (n && n.parentNode !== editor) n = n.parentNode;
+    block = n;
+  }
+  editor.childNodes.forEach((node) => {
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    node.classList.toggle("dim", !!block && node !== block);
+  });
+}
+document.addEventListener("selectionchange", applyFocus);
+editor.addEventListener("blur", () =>
+  editor.querySelectorAll(".line.dim").forEach((n) => n.classList.remove("dim")));
+
+/* ===== 字数 / 状态 ===== */
 function counts(text) {
   return { cjk: (text.match(CJK_RE) || []).length, en: (text.match(EN_RE) || []).length };
 }
 
-function fmtActive(ms) {
-  const mins = Math.round(ms / 60000);
-  if (mins < 1) return "不到 1 分钟";
-  if (mins < 60) return `${mins} 分钟`;
-  return `${Math.floor(mins / 60)} 小时 ${mins % 60} 分`;
-}
+function fmtActiveMin(ms) { return Math.round(ms / 60000); }
 
 function renderCounts() {
-  const c = counts($("editor").value);
-  $("cjkCount").textContent = c.cjk;
-  $("enCount").textContent = c.en;
-  $("activeTime").textContent = fmtActive(serverActiveMs + pendingActiveMs);
+  const c = counts(getEditorContent());
+  $("cjkCount").textContent = c.cjk.toLocaleString();
+  $("enCount").textContent = c.en.toLocaleString();
+  $("todayMin").textContent = `今日 ${fmtActiveMin(serverActiveMs + pendingActiveMs)} 分`;
+}
+
+function setSync(text, cls) {
+  $("syncText").textContent = text;
+  $("syncText").className = cls === "err" ? "err" : "";
+  $("syncDot").className = "sync-dot " + (cls || "");
+}
+
+function setTodayDelta(delta) {
+  if (typeof delta !== "number") return;
+  $("todayDelta").textContent = `今日 ${delta >= 0 ? "+" : ""}${delta} 字`;
 }
 
 function trackTyping() {
@@ -196,6 +593,7 @@ function localDate() {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
+/* ===== 同步 ===== */
 async function api(path, payload) {
   const resp = await fetch(path, {
     method: "POST",
@@ -222,16 +620,17 @@ async function loadList() {
   const data = await api("/writing/docs/list", { date: localDate() });
   if (!data.ok) throw new Error(data.error);
   docList = data.docs;
-  if (data.today) serverActiveMs = data.today.activeMs || 0;
+  if (data.today) {
+    serverActiveMs = data.today.activeMs || 0;
+    setTodayDelta(data.today.deltaCjk);
+  }
   renderCounts();
   renderSelect();
-  if (docList.length === 0) {
-    setSync("等待电脑首次同步，或点「新建」直接开写", "");
-  }
+  if (docList.length === 0) setSync("等待电脑首次同步，或点「新建」直接开写", "");
 }
 
 async function openDoc(name) {
-  if (dirty) await save();  // 切换前先保存
+  if (dirty) await save();
   const data = await api("/writing/docs/get", { name });
   if (!data.ok) {
     setSync(`打开失败：${data.error}`, "err");
@@ -239,25 +638,26 @@ async function openDoc(name) {
   }
   current = { name, updatedAt: data.updatedAt, readonly: data.readonly };
   localStorage.setItem("writing_last_doc", name);
-  $("editor").value = data.content;
-  $("editor").disabled = data.readonly;
+  setEditorContent(data.content);
+  editor.contentEditable = data.readonly ? "false" : "true";
   renderCounts();
   renderSelect();
-  setSync(data.readonly ? "只读（Word 文档请在电脑上编辑）" : "已就绪", "");
+  setSync(data.readonly ? "只读（Word 文档请在电脑上编辑）" : "已就绪", "ok");
 }
 
-function onEdit() {
+editor.addEventListener("input", () => {
   dirty = true;
   trackTyping();
+  reclassify();
   renderCounts();
-  setSync("编辑中…");
+  setSync("编辑中…", "busy");
   clearTimeout(saveTimer);
   saveTimer = setTimeout(save, SAVE_DEBOUNCE_MS);
-}
+});
 
 async function save() {
   if (!current || current.readonly || !dirty) return;
-  const content = $("editor").value;
+  const content = getEditorContent();
   try {
     const sentActiveMs = Math.round(pendingActiveMs);
     const data = await api("/writing/docs/put", {
@@ -272,9 +672,10 @@ async function save() {
       pendingActiveMs = Math.max(0, pendingActiveMs - sentActiveMs);
       localStorage.setItem("writing_pending_active", String(pendingActiveMs));
       renderCounts();
+      setTodayDelta(data.deltaCjk);
       const t = new Date();
       const p = (n) => String(n).padStart(2, "0");
-      setSync(`已同步 ${p(t.getHours())}:${p(t.getMinutes())} · 今日 ${data.deltaCjk >= 0 ? "+" : ""}${data.deltaCjk} 字`, "ok");
+      setSync(`已同步 ${p(t.getHours())}:${p(t.getMinutes())}`, "ok");
     } else if (data.conflict) {
       localStorage.setItem("writing_conflict_backup", content);
       setSync("电脑上有更新的版本，已重新加载（你的改动暂存在本机）", "err");
@@ -306,7 +707,7 @@ async function newDoc() {
 }
 
 function copyDoc() {
-  navigator.clipboard.writeText($("editor").value).then(
+  navigator.clipboard.writeText(getEditorContent()).then(
     () => setSync("已复制全文", "ok"),
     () => setSync("复制失败", "err")
   );
@@ -334,7 +735,7 @@ async function refresh() {
       const meta = docList.find((d) => d.name === current.name);
       if (meta && meta.updatedAt > current.updatedAt) await openDoc(current.name);
     }
-  } catch (e) { /* 静默，下轮再试 */ }
+  } catch (e) { /* 下轮再试 */ }
 }
 
 async function boot() {
@@ -348,11 +749,65 @@ async function boot() {
   }
 }
 
+/* ===== 番茄钟 / 正计时 ===== */
+let timer = { mode: "番茄", running: false, elapsed: 0, interval: null };
+
+function renderTimer() {
+  const shown = timer.mode === "番茄" ? Math.max(0, POMODORO_SEC - timer.elapsed) : timer.elapsed;
+  const mm = String(Math.floor(shown / 60)).padStart(2, "0");
+  const ss = String(shown % 60).padStart(2, "0");
+  const done = timer.mode === "番茄" && timer.elapsed >= POMODORO_SEC;
+  $("timerClock").textContent = `${mm}:${ss}`;
+  $("timerClock").className = "clock " + (done ? "done" : timer.running ? "running" : "");
+  $("timerMode").textContent = timer.mode;
+  $("timerRun").textContent = timer.running ? "❚❚" : "▶";
+}
+
+function timerTick() {
+  timer.elapsed += 1;
+  if (timer.mode === "番茄" && timer.elapsed >= POMODORO_SEC) {
+    timer.elapsed = POMODORO_SEC;
+    timer.running = false;
+    clearInterval(timer.interval);
+    setSync("番茄钟完成，休息一下", "ok");
+  }
+  renderTimer();
+}
+
+function toggleRun() {
+  if (timer.running) {
+    clearInterval(timer.interval);
+    timer.running = false;
+  } else {
+    if (timer.mode === "番茄" && timer.elapsed >= POMODORO_SEC) timer.elapsed = 0;
+    timer.interval = setInterval(timerTick, 1000);
+    timer.running = true;
+  }
+  renderTimer();
+}
+
+function toggleMode() {
+  clearInterval(timer.interval);
+  timer = { mode: timer.mode === "番茄" ? "正计时" : "番茄", running: false, elapsed: 0, interval: null };
+  renderTimer();
+}
+
+function resetTimer() {
+  clearInterval(timer.interval);
+  timer.running = false;
+  timer.elapsed = 0;
+  renderTimer();
+}
+
+/* ===== 启动 ===== */
+applyPrefs();
+renderTimer();
 if (token) {
   $("setup").classList.add("hidden");
   boot();
 }
 setInterval(refresh, REFRESH_MS);
+setInterval(renderCounts, 30000);
 window.addEventListener("beforeunload", () => { if (dirty) save(); });
 </script>
 </body>
