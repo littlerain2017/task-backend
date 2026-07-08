@@ -973,6 +973,7 @@ async def startup():
 import re
 import time as time_mod
 from fastapi.responses import HTMLResponse, PlainTextResponse
+import base64
 import hashlib
 from typing import Optional
 from writing_logic import aggregate_file_docs, build_daily, count_text, normalize_files
@@ -1117,6 +1118,15 @@ def content_hash(text: str) -> str:
     return hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
 
 
+# tcb 的 HTTP API 查询串无法承载换行等控制字符，内容一律 base64 存储
+def content_encode(text: str) -> str:
+    return base64.b64encode(text.encode("utf-8")).decode("ascii")
+
+
+def content_decode(b64: str) -> str:
+    return base64.b64decode(b64.encode("ascii")).decode("utf-8")
+
+
 async def writing_uid_from_token(token: str) -> str:
     q = f'db.collection("devices").where({{token:{json.dumps(token)}}}).limit(1).get()'
     rows = (await writing_db("databasequery", q)).get("data", [])
@@ -1189,7 +1199,7 @@ async def writing_docs_get(req: DocsGetRequest):
         doc = await writing_query_doc("docs", f"{uid}:{req.name}")
         if doc is None:
             return {"ok": False, "error": "文件不存在"}
-        return {"ok": True, "content": doc.get("content", ""),
+        return {"ok": True, "content": content_decode(doc.get("contentB64", "")),
                 "updatedAt": doc.get("updatedAt", 0), "readonly": doc.get("readonly", False)}
     except RuntimeError as e:
         print(f"[writing] docs/get 失败: {e}")
@@ -1222,7 +1232,7 @@ async def writing_docs_put(req: DocsPutRequest):
         now_ms = int(time_mod.time() * 1000)
         cjk, en = count_text(req.content)
         await writing_upsert("docs", doc_id, {
-            "uid": uid, "name": req.name, "content": req.content,
+            "uid": uid, "name": req.name, "contentB64": content_encode(req.content),
             "hash": content_hash(req.content), "editor": req.editor,
             "readonly": req.readonly, "cjk": cjk, "en": en, "updatedAt": now_ms,
         })
@@ -1255,7 +1265,7 @@ async def writing_docs_changes(req: DocsChangesRequest):
             if m.get("editor") == "web" and m.get("updatedAt", 0) > req.since:
                 full = await writing_query_doc("docs", f"{uid}:{name}")
                 if full:
-                    changed.append({"name": name, "content": full.get("content", ""),
+                    changed.append({"name": name, "content": content_decode(full.get("contentB64", "")),
                                     "updatedAt": full.get("updatedAt", 0)})
             # 只清理「最后一次由电脑编辑」且本地已不存在的文件——网页新建未落盘的文件绝不动
             elif m.get("editor") == "computer" and local_names and name not in local_names:
