@@ -205,54 +205,22 @@
     border-radius: 999px;
     padding: 8px 10px 8px 16px;
   }
-  .timer .mode {
-    font-family: inherit;
+  .timer { padding: 8px 18px; }
+  .timer .t-label {
     font-size: 12px;
     letter-spacing: 0.08em;
     color: var(--muted);
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    padding: 0;
+    white-space: nowrap;
   }
-  .timer .mode:hover { color: var(--gold-bright); }
   .timer .clock {
     font-size: 16px;
     font-weight: 500;
     font-variant-numeric: tabular-nums;
-    min-width: 52px;
     text-align: center;
     color: #beb5a2;
+    transition: color 0.3s;
   }
   .timer .clock.running { color: var(--gold-bright); }
-  .timer .clock.done { color: var(--green); }
-  .timer .today-min { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
-  .timer .run {
-    width: 34px;
-    height: 34px;
-    border-radius: 50%;
-    border: 1px solid rgba(211, 178, 92, 0.4);
-    background: rgba(211, 178, 92, 0.12);
-    color: var(--gold);
-    font-size: 12px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: background 0.2s;
-  }
-  .timer .run:hover { background: rgba(211, 178, 92, 0.25); }
-  .timer .reset {
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    border: none;
-    background: transparent;
-    color: var(--muted);
-    font-size: 13px;
-    cursor: pointer;
-  }
-  .timer .reset:hover { color: var(--gold-bright); }
 
   /* 底部渐隐 */
   .fade {
@@ -380,12 +348,9 @@
 
   <main id="editor" contenteditable="true" spellcheck="false"></main>
 
-  <div class="timer">
-    <button class="mode" id="timerMode" onclick="toggleMode()" title="切换 番茄 / 正计时">番茄</button>
-    <span class="clock" id="timerClock">25:00</span>
-    <span class="today-min" id="todayMin">今日 0 分</span>
-    <button class="run" id="timerRun" onclick="toggleRun()">▶</button>
-    <button class="reset" onclick="resetTimer()" title="重置">↺</button>
+  <div class="timer" title="今日实际打字时长，自动计时，停笔 1 分钟暂停">
+    <span class="t-label">今日写作</span>
+    <span class="clock" id="activeClock">0:00</span>
   </div>
 
   <div class="fade"></div>
@@ -419,7 +384,6 @@ const EN_RE = /[A-Za-z]+(?:'[A-Za-z]+)?/g;
 const SAVE_DEBOUNCE_MS = 4000;
 const REFRESH_MS = 20000;
 const TYPING_IDLE_MS = 60000;
-const POMODORO_SEC = 1500;
 
 const TONES = {
   "暖黑":   { bg: "#171512", header: "rgba(23,21,18,0.82)",  ink: "#e9e2d3" },
@@ -478,12 +442,12 @@ function togglePrefs() { $("prefs").classList.toggle("open"); }
 
 // ⌘D（Windows 上 Ctrl+D）呼出/收起调整面板；⌘S 回到上次修改的地方并立即保存
 document.addEventListener("keydown", (e) => {
-  if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
+  if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
   const key = e.key.toLowerCase();
-  if (key === "d") {
+  if (key === "d" && !e.shiftKey) {
     e.preventDefault();  // 拦截浏览器默认的“添加书签”
     togglePrefs();
-  } else if (key === "s") {
+  } else if (key === "s") {  // ⌘S 或 ⌘⇧S 都可以
     e.preventDefault();  // 拦截浏览器默认的“保存网页”
     jumpToLastEdit();
     if (dirty) save();
@@ -507,10 +471,24 @@ function rememberEditPos() {
   localStorage.setItem("writing_lastedit", JSON.stringify(lastEditPos));
 }
 
+function lastNonEmptyIndex() {
+  for (let i = editor.childNodes.length - 1; i >= 0; i--) {
+    if (editor.childNodes[i].textContent.trim() !== "") return i;
+  }
+  return editor.childNodes.length - 1;
+}
+
 function jumpToLastEdit() {
-  if (!current) return;
-  const pos = lastEditPos[current.name];
-  if (!pos) return;
+  if (!current || editor.childNodes.length === 0) return;
+  let pos = lastEditPos[current.name];
+  if (!pos) {
+    // 本文件还没有记录过落笔位置 → 跳到全文末尾
+    const i = lastNonEmptyIndex();
+    pos = { line: i, offset: editor.childNodes[i].textContent.length };
+    setSync("跳到全文末尾（打字后 ⌘S 会记住确切位置）", "ok");
+  } else {
+    setSync("已回到上次落笔处", "ok");
+  }
   const block = editor.childNodes[Math.min(pos.line, editor.childNodes.length - 1)];
   if (!block) return;
   // 在块内按字符偏移找到落点
@@ -629,13 +607,12 @@ function counts(text) {
   return { cjk: (text.match(CJK_RE) || []).length, en: (text.match(EN_RE) || []).length };
 }
 
-function fmtActiveMin(ms) { return Math.round(ms / 60000); }
 
 function renderCounts() {
   const c = counts(getEditorContent());
   $("cjkCount").textContent = c.cjk.toLocaleString();
   $("enCount").textContent = c.en.toLocaleString();
-  $("todayMin").textContent = `今日 ${fmtActiveMin(serverActiveMs + pendingActiveMs)} 分`;
+  renderActiveClock();
 }
 
 function setSync(text, cls) {
@@ -650,12 +627,30 @@ function setTodayDelta(delta) {
 }
 
 function trackTyping() {
-  const now = Date.now();
-  if (lastKeyTs && now - lastKeyTs <= TYPING_IDLE_MS) {
-    pendingActiveMs += now - lastKeyTs;
+  // 只标记「正在打字」；时长由每秒的 tickActive 累计，避免双重计数
+  lastKeyTs = Date.now();
+}
+
+function isTypingNow() {
+  return lastKeyTs && Date.now() - lastKeyTs <= TYPING_IDLE_MS;
+}
+
+function tickActive() {
+  if (isTypingNow()) {
+    pendingActiveMs += 1000;
     localStorage.setItem("writing_pending_active", String(pendingActiveMs));
   }
-  lastKeyTs = now;
+  renderActiveClock();
+}
+
+function renderActiveClock() {
+  const totalSec = Math.floor((serverActiveMs + pendingActiveMs) / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  const p = (n) => String(n).padStart(2, "0");
+  $("activeClock").textContent = h > 0 ? `${h}:${p(m)}:${p(s)}` : `${m}:${p(s)}`;
+  $("activeClock").classList.toggle("running", isTypingNow());
 }
 
 function localDate() {
@@ -821,59 +816,10 @@ async function boot() {
   }
 }
 
-/* ===== 番茄钟 / 正计时 ===== */
-let timer = { mode: "番茄", running: false, elapsed: 0, interval: null };
-
-function renderTimer() {
-  const shown = timer.mode === "番茄" ? Math.max(0, POMODORO_SEC - timer.elapsed) : timer.elapsed;
-  const mm = String(Math.floor(shown / 60)).padStart(2, "0");
-  const ss = String(shown % 60).padStart(2, "0");
-  const done = timer.mode === "番茄" && timer.elapsed >= POMODORO_SEC;
-  $("timerClock").textContent = `${mm}:${ss}`;
-  $("timerClock").className = "clock " + (done ? "done" : timer.running ? "running" : "");
-  $("timerMode").textContent = timer.mode;
-  $("timerRun").textContent = timer.running ? "❚❚" : "▶";
-}
-
-function timerTick() {
-  timer.elapsed += 1;
-  if (timer.mode === "番茄" && timer.elapsed >= POMODORO_SEC) {
-    timer.elapsed = POMODORO_SEC;
-    timer.running = false;
-    clearInterval(timer.interval);
-    setSync("番茄钟完成，休息一下", "ok");
-  }
-  renderTimer();
-}
-
-function toggleRun() {
-  if (timer.running) {
-    clearInterval(timer.interval);
-    timer.running = false;
-  } else {
-    if (timer.mode === "番茄" && timer.elapsed >= POMODORO_SEC) timer.elapsed = 0;
-    timer.interval = setInterval(timerTick, 1000);
-    timer.running = true;
-  }
-  renderTimer();
-}
-
-function toggleMode() {
-  clearInterval(timer.interval);
-  timer = { mode: timer.mode === "番茄" ? "正计时" : "番茄", running: false, elapsed: 0, interval: null };
-  renderTimer();
-}
-
-function resetTimer() {
-  clearInterval(timer.interval);
-  timer.running = false;
-  timer.elapsed = 0;
-  renderTimer();
-}
-
 /* ===== 启动 ===== */
 applyPrefs();
-renderTimer();
+renderActiveClock();
+setInterval(tickActive, 1000);
 if (token) {
   $("setup").classList.add("hidden");
   boot();
