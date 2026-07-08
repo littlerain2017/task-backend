@@ -130,6 +130,7 @@
     <select id="docSelect" onchange="switchDoc(this.value)"></select>
     <button class="btn" onclick="newDoc()">新建</button>
     <button class="btn" onclick="copyDoc()">复制全文</button>
+    <button class="btn" onclick="editToken()">令牌</button>
   </header>
   <div class="statusbar">
     <span class="counts">中文 <b id="cjkCount">0</b> 字 · 英文 <b id="enCount">0</b> 词</span>
@@ -274,10 +275,15 @@ async function sync() {
       throw new Error(data.error || "未知错误");
     }
   } catch (e) {
-    setSync("同步失败，8 秒后重试", "err");
+    setSync(`同步失败：${e.message}（8 秒后重试）`, "err");
     clearTimeout(syncTimer);
     syncTimer = setTimeout(sync, 8000);
   }
+}
+
+function editToken() {
+  document.getElementById("tokenInput").value = token;
+  document.getElementById("setup").classList.remove("hidden");
 }
 
 function saveToken() {
