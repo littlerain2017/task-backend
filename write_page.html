@@ -226,13 +226,16 @@
     padding-left: 8ch;
     padding-right: 8ch;
   }
+  /* 元素语义色：场景=鎏金 / 人名=灰绿 / 对白=正文色 / 括号注=灰 / 转场=雾紫 */
   #editor.script .line.sc-scene {
     text-transform: uppercase;
     font-weight: 700;
+    color: var(--gold);
   }
   #editor.script .line.sc-char {
     padding-left: 28ch;
     text-transform: uppercase;
+    color: #96bd9c;
   }
   #editor.script .line.sc-dial {
     padding-left: 18ch;
@@ -242,10 +245,15 @@
     padding-left: 22ch;
     padding-right: 24ch;
     color: var(--muted);
+    font-style: italic;
   }
   #editor.script .line.sc-trans {
     text-align: right;
     text-transform: uppercase;
+    color: #a89bc9;
+  }
+  #editor.script .line.sc-action {
+    color: var(--ink-soft);
   }
 
   .btn.on { color: var(--gold); border-color: rgba(211, 178, 92, 0.5); }
