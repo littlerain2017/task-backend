@@ -33,6 +33,17 @@ def build_daily(uid, date_id, counts, existing_daily, now_ms):
     }
 
 
+def aggregate_file_docs(docs):
+    """把一个用户全部来源（电脑/网页）的 files 文档聚合成 {name: {cjk, en}}。
+
+    不同来源理论上文件名不同（网页文档带「网页·」前缀）；若真撞名，后者覆盖前者。
+    """
+    counts = {}
+    for d in docs:
+        counts[d["name"]] = {"cjk": d["cjk"], "en": d["en"]}
+    return counts
+
+
 def normalize_files(raw_files):
     """校验并归一化客户端上报的文件列表 → {name: {cjk, en}}。
 

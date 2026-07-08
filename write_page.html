@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>写作 · THE ROOM</title>
+<style>
+  :root {
+    --ink: #F5F7FA;
+    --ink-soft: rgba(245,247,250,.75);
+    --muted: rgba(245,247,250,.5);
+    --accent: #FFD100;
+    --hairline: rgba(245,247,250,.2);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: #000;
+    color: var(--ink);
+    font-family: "Songti SC", "Noto Serif SC", Georgia, serif;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px 10px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .kicker { font-size: 12px; letter-spacing: .35em; color: var(--accent); white-space: nowrap; }
+  #docSelect {
+    flex: 1;
+    min-width: 0;
+    background: transparent;
+    color: var(--ink);
+    border: 1px solid var(--hairline);
+    border-radius: 8px;
+    padding: 6px 8px;
+    font-family: inherit;
+    font-size: 14px;
+  }
+  #docSelect option { color: #000; }
+  .btn {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--hairline);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-family: inherit;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  .statusbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 8px 16px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .counts b { color: var(--accent); font-weight: 700; font-variant-numeric: tabular-nums; }
+  #syncState.ok { color: var(--accent); }
+  #syncState.err { color: #FF6B5B; }
+  #titleInput {
+    width: 100%;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--ink);
+    font-family: inherit;
+    font-size: 20px;
+    font-weight: 700;
+    padding: 6px 16px 2px;
+  }
+  #editor {
+    flex: 1;
+    width: 100%;
+    background: transparent;
+    border: none;
+    outline: none;
+    resize: none;
+    color: var(--ink);
+    font-family: inherit;
+    font-size: 17px;
+    line-height: 1.9;
+    padding: 8px 16px calc(24px + env(safe-area-inset-bottom));
+  }
+  /* 令牌配置浮层 */
+  #setup {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.92);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 32px;
+    text-align: center;
+  }
+  #setup.hidden { display: none; }
+  #setup h1 { font-size: 18px; letter-spacing: .2em; }
+  #setup p { font-size: 13px; color: var(--muted); line-height: 1.8; }
+  #tokenInput {
+    width: 100%;
+    max-width: 380px;
+    background: transparent;
+    border: 1px dashed var(--hairline);
+    border-radius: 10px;
+    color: var(--accent);
+    font-family: inherit;
+    font-size: 16px;
+    text-align: center;
+    padding: 12px;
+  }
+  #setup .btn { color: var(--accent); border-color: var(--accent); padding: 10px 28px; }
+</style>
+</head>
+<body>
+  <div id="setup">
+    <h1>THE ROOM · 写作</h1>
+    <p>粘贴小程序「连接电脑」页里的配对令牌，<br>在这里写的每个字都会实时同步到你的小程序。</p>
+    <input id="tokenInput" placeholder="WRT-XXXXXXXX" autocomplete="off">
+    <button class="btn" onclick="saveToken()">开始写作</button>
+  </div>
+
+  <header>
+    <span class="kicker">THE ROOM</span>
+    <select id="docSelect" onchange="switchDoc(this.value)"></select>
+    <button class="btn" onclick="newDoc()">新建</button>
+    <button class="btn" onclick="copyDoc()">复制全文</button>
+  </header>
+  <div class="statusbar">
+    <span class="counts">中文 <b id="cjkCount">0</b> 字 · 英文 <b id="enCount">0</b> 词</span>
+    <span id="syncState">未同步</span>
+  </div>
+  <input id="titleInput" placeholder="标题" oninput="onEdit()">
+  <textarea id="editor" placeholder="从这里开始写…（内容保存在本机浏览器，字数实时同步到小程序）" oninput="onEdit()"></textarea>
+
+<script>
+const SERVER = "";  // 同源
+const CJK_RE = /[一-鿿]/g;
+const EN_RE = /[A-Za-z]+(?:'[A-Za-z]+)?/g;
+const SYNC_DEBOUNCE_MS = 4000;
+
+let token = localStorage.getItem("writing_token") || "";
+let docs = JSON.parse(localStorage.getItem("writing_docs") || "null") || [
+  { id: Date.now(), title: "手机草稿", content: "" },
+];
+let currentId = Number(localStorage.getItem("writing_current")) || docs[0].id;
+let syncTimer = null;
+
+function count(text) {
+  return {
+    cjk: (text.match(CJK_RE) || []).length,
+    en: (text.match(EN_RE) || []).length,
+  };
+}
+
+function currentDoc() {
+  return docs.find((d) => d.id === currentId) || docs[0];
+}
+
+function persist() {
+  localStorage.setItem("writing_docs", JSON.stringify(docs));
+  localStorage.setItem("writing_current", String(currentId));
+}
+
+function renderSelect() {
+  const sel = document.getElementById("docSelect");
+  sel.innerHTML = "";
+  docs.forEach((d) => {
+    const opt = document.createElement("option");
+    opt.value = d.id;
+    opt.textContent = d.title || "未命名";
+    if (d.id === currentId) opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
+function renderDoc() {
+  const d = currentDoc();
+  currentId = d.id;
+  document.getElementById("titleInput").value = d.title;
+  document.getElementById("editor").value = d.content;
+  renderCounts();
+  renderSelect();
+}
+
+function renderCounts() {
+  const c = count(document.getElementById("editor").value);
+  document.getElementById("cjkCount").textContent = c.cjk;
+  document.getElementById("enCount").textContent = c.en;
+}
+
+function onEdit() {
+  const d = currentDoc();
+  d.title = document.getElementById("titleInput").value.trim() || "未命名";
+  d.content = document.getElementById("editor").value;
+  persist();
+  renderCounts();
+  renderSelect();
+  scheduleSync();
+}
+
+function switchDoc(id) {
+  currentId = Number(id);
+  persist();
+  renderDoc();
+}
+
+function newDoc() {
+  const d = { id: Date.now(), title: "未命名", content: "" };
+  docs.push(d);
+  currentId = d.id;
+  persist();
+  renderDoc();
+  document.getElementById("titleInput").focus();
+}
+
+function copyDoc() {
+  navigator.clipboard.writeText(currentDoc().content).then(
+    () => setSync("已复制全文", "ok"),
+    () => setSync("复制失败", "err")
+  );
+}
+
+function setSync(text, cls) {
+  const el = document.getElementById("syncState");
+  el.textContent = text;
+  el.className = cls || "";
+}
+
+function localDate() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+function buildFiles() {
+  const seen = {};
+  return docs
+    .filter((d) => d.content.length > 0)
+    .map((d) => {
+      let name = "网页·" + (d.title || "未命名");
+      if (seen[name]) name += " " + ++seen[name];
+      else seen[name] = 1;
+      const c = count(d.content);
+      return { name, cjk: c.cjk, en: c.en };
+    });
+}
+
+function scheduleSync() {
+  clearTimeout(syncTimer);
+  setSync("同步中…");
+  syncTimer = setTimeout(sync, SYNC_DEBOUNCE_MS);
+}
+
+async function sync() {
+  if (!token) return;
+  try {
+    const resp = await fetch(SERVER + "/writing/report", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, date: localDate(), source: "web", files: buildFiles() }),
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      const t = new Date();
+      const p = (n) => String(n).padStart(2, "0");
+      setSync(`已同步 ${p(t.getHours())}:${p(t.getMinutes())}:${p(t.getSeconds())} · 今日 ${data.deltaCjk >= 0 ? "+" : ""}${data.deltaCjk} 字`, "ok");
+    } else {
+      throw new Error(data.error || "未知错误");
+    }
+  } catch (e) {
+    setSync("同步失败，8 秒后重试", "err");
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(sync, 8000);
+  }
+}
+
+function saveToken() {
+  const v = document.getElementById("tokenInput").value.trim();
+  if (!v) return;
+  token = v;
+  localStorage.setItem("writing_token", v);
+  document.getElementById("setup").classList.add("hidden");
+  scheduleSync();
+}
+
+if (token) document.getElementById("setup").classList.add("hidden");
+renderDoc();
+</script>
+</body>
+</html>

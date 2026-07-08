@@ -104,6 +104,7 @@ def report(cfg, counts):
     payload = json.dumps({
         "token": cfg["token"],
         "date": date.today().isoformat(),
+        "source": "computer",
         "files": [{"name": n, **c} for n, c in counts.items()],
     }).encode("utf-8")
     req = urllib.request.Request(

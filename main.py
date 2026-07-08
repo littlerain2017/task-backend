@@ -972,8 +972,8 @@ async def startup():
 # ==================== 写作进度（writing-progress 小程序，多用户） ====================
 import re
 import time as time_mod
-from fastapi.responses import PlainTextResponse
-from writing_logic import build_daily, normalize_files
+from fastapi.responses import HTMLResponse, PlainTextResponse
+from writing_logic import aggregate_file_docs, build_daily, normalize_files
 
 WRITING_APPID = os.environ.get("WRITING_APPID", "wxff2f10ce15321b4a")
 WRITING_APPSECRET = os.environ.get("WRITING_APPSECRET", "af1333432c29946412e52b37c805d836")
@@ -985,10 +985,14 @@ _writing_token = {"value": "", "expires_at": 0.0}
 _writing_last_report_at = {}
 
 
+SOURCE_RE = re.compile(r"^[a-z]{1,20}$")
+
+
 class WritingReportRequest(BaseModel):
     token: str
     date: str
     files: list
+    source: str = "computer"  # 上报来源：computer（电脑监控）/ web（手机写作页）
 
 
 async def writing_access_token() -> str:
@@ -1052,6 +1056,8 @@ async def writing_report(req: WritingReportRequest):
 
     if not DATE_RE.match(req.date):
         return {"ok": False, "error": "日期格式应为 YYYY-MM-DD"}
+    if not SOURCE_RE.match(req.source):
+        return {"ok": False, "error": "非法来源标识"}
     try:
         counts = normalize_files(req.files)
     except ValueError as e:
@@ -1068,26 +1074,42 @@ async def writing_report(req: WritingReportRequest):
             return {"ok": False, "error": "令牌未绑定用户"}
 
         now_ms = int(now * 1000)
-        daily_id = f"{uid}:{req.date}"
-        daily = build_daily(uid, req.date, counts, await writing_query_doc("daily", daily_id), now_ms)
-        await writing_upsert("daily", daily_id, daily)
 
+        # 1. 更新本来源（电脑或网页）的文件记录
         for name, c in counts.items():
-            await writing_upsert("files", f"{uid}:{name}", {
-                "uid": uid, "name": name, "cjk": c["cjk"], "en": c["en"], "updatedAt": now_ms,
+            await writing_upsert("files", f"{uid}:{req.source}:{name}", {
+                "uid": uid, "source": req.source, "name": name,
+                "cjk": c["cjk"], "en": c["en"], "updatedAt": now_ms,
             })
 
-        # 清理该用户已删除文件的残留
-        list_q = f'db.collection("files").where({{uid:{json.dumps(uid)}}}).limit(1000).field({{_id:true}}).get()'
+        # 2. 只清理本来源已删除文件的残留（不碰其他来源）
+        list_q = (f'db.collection("files").where({{uid:{json.dumps(uid)},source:{json.dumps(req.source)}}})'
+                  f'.limit(1000).field({{_id:true}}).get()')
         cloud_ids = {json.loads(r)["_id"] for r in (await writing_db("databasequery", list_q)).get("data", [])}
-        for stale in cloud_ids - {f"{uid}:{n}" for n in counts}:
+        for stale in cloud_ids - {f"{uid}:{req.source}:{n}" for n in counts}:
             del_q = f'db.collection("files").where({{_id:{json.dumps(stale)}}}).remove()'
             await writing_db("databasedelete", del_q)
+
+        # 3. 聚合该用户全部来源，计算当日进度
+        all_q = f'db.collection("files").where({{uid:{json.dumps(uid)}}}).limit(1000).get()'
+        all_docs = [json.loads(r) for r in (await writing_db("databasequery", all_q)).get("data", [])]
+        merged = aggregate_file_docs(all_docs)
+
+        daily_id = f"{uid}:{req.date}"
+        daily = build_daily(uid, req.date, merged, await writing_query_doc("daily", daily_id), now_ms)
+        await writing_upsert("daily", daily_id, daily)
 
         return {"ok": True, "deltaCjk": daily["deltaCjk"]}
     except RuntimeError as e:
         print(f"[writing] 上报失败: {e}")
         return {"ok": False, "error": "服务器内部错误，稍后自动重试"}
+
+
+@app.get("/write")
+async def writing_web_page():
+    page = os.path.join(os.path.dirname(os.path.abspath(__file__)), "write_page.html")
+    with open(page, encoding="utf-8") as f:
+        return HTMLResponse(f.read())
 
 
 @app.get("/writing/watcher.py")

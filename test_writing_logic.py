@@ -1,7 +1,23 @@
 """writing_logic 单元测试。"""
 import unittest
 
-from writing_logic import build_daily, normalize_files
+from writing_logic import aggregate_file_docs, build_daily, normalize_files
+
+
+class TestAggregateFileDocs(unittest.TestCase):
+    def test_merges_sources(self):
+        docs = [
+            {"name": "chapter1.md", "cjk": 100, "en": 5, "source": "computer"},
+            {"name": "网页·灵感", "cjk": 30, "en": 0, "source": "web"},
+        ]
+        counts = aggregate_file_docs(docs)
+        self.assertEqual(counts, {
+            "chapter1.md": {"cjk": 100, "en": 5},
+            "网页·灵感": {"cjk": 30, "en": 0},
+        })
+
+    def test_empty(self):
+        self.assertEqual(aggregate_file_docs([]), {})
 
 
 class TestBuildDaily(unittest.TestCase):
