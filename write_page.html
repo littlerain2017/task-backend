@@ -20,6 +20,12 @@
     font-family: "Songti SC", "Noto Serif SC", Georgia, serif;
     display: flex;
     flex-direction: column;
+    align-items: center;
+  }
+  /* 阅读学：中文每行 36~40 字最舒适，内容列统一限宽居中 */
+  header, .statusbar, #editor {
+    width: 100%;
+    max-width: 680px;
   }
   header {
     display: flex;
@@ -56,8 +62,9 @@
     justify-content: space-between;
     align-items: baseline;
     gap: 12px;
-    padding: 8px 16px;
-    font-size: 13px;
+    padding: 10px 16px 6px;
+    font-size: 12px;
+    letter-spacing: 0.02em;
     color: var(--muted);
   }
   .counts b { color: var(--accent); font-weight: 700; font-variant-numeric: tabular-nums; }
@@ -66,16 +73,18 @@
   #syncState.err { color: #FF6B5B; }
   #editor {
     flex: 1;
-    width: 100%;
     background: transparent;
     border: none;
     outline: none;
     resize: none;
     color: var(--ink);
+    caret-color: var(--accent);
     font-family: inherit;
-    font-size: 17px;
-    line-height: 1.9;
-    padding: 8px 16px calc(24px + env(safe-area-inset-bottom));
+    /* 中文长文：17~19px 自适应、行距 1.95、字距微松 */
+    font-size: clamp(16px, 15px + 0.4vw, 19px);
+    line-height: 1.95;
+    letter-spacing: 0.03em;
+    padding: 16px 20px calc(32px + env(safe-area-inset-bottom));
   }
   #editor:disabled { color: var(--muted); }
   #setup {
