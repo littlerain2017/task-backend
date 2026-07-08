@@ -1173,6 +1173,7 @@ class DocsChangesRequest(BaseModel):
     token: str
     since: int
     names: list  # 本地磁盘当前存在的文件名，用于清理已删除文件
+    deletedNames: list = []  # 客户端确认「曾同步到磁盘、现已删除」的文件
     date: str
 
 
@@ -1260,7 +1261,18 @@ async def writing_docs_changes(req: DocsChangesRequest):
         changed = []
         removed = []
         local_names = set(n for n in req.names if isinstance(n, str))
+        # 客户端确认删除的文件：无论最后编辑者是谁都清理（曾落盘、用户主动删的）
+        confirmed_deleted = set(n for n in req.deletedNames if isinstance(n, str)) - local_names
+        for name in confirmed_deleted:
+            if any(m.get("name") == name for m in metas):
+                await writing_db("databasedelete",
+                                 f'db.collection("docs").where({{_id:{json.dumps(f"{uid}:{name}")}}}).remove()')
+                await writing_db("databasedelete",
+                                 f'db.collection("files").where({{_id:{json.dumps(f"{uid}:sync:{name}")}}}).remove()')
+                removed.append(name)
         for m in metas:
+            if m.get("name") in confirmed_deleted:
+                continue
             name = m.get("name", "")
             if m.get("editor") == "web" and m.get("updatedAt", 0) > req.since:
                 full = await writing_query_doc("docs", f"{uid}:{name}")

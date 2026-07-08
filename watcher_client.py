@@ -146,9 +146,12 @@ def push_changed(cfg, state, files):
 
 
 def apply_web_changes(cfg, state, files):
+    # 曾经同步到过磁盘、现在本地已删除的文件 → 明确通知云端删除
+    locally_deleted = [n for n in state["synced_hashes"] if n not in files]
     data = post("/writing/docs/changes", {
         "token": cfg["token"], "since": state["since"],
-        "names": list(files.keys()), "date": local_date(),
+        "names": list(files.keys()), "deletedNames": locally_deleted,
+        "date": local_date(),
     })
     if not data.get("ok"):
         log(f"拉取失败: {data.get('error')}")
