@@ -156,7 +156,7 @@
     padding: 48px 24px 45vh;
     font-size: var(--font-size, 19px);
     line-height: 2.05;
-    letter-spacing: 0.02em;
+    letter-spacing: var(--tracking, 0.05em);
     color: var(--ink);
     caret-color: var(--gold);
     outline: none;
@@ -403,6 +403,10 @@
       <span class="row-title">行宽 <span id="measureVal">760</span>px</span>
       <input type="range" min="600" max="960" step="20" id="measureRange" oninput="setPref('measure', +this.value)">
     </div>
+    <div class="row">
+      <span class="row-title">字距 <span id="trackingVal">0.05</span>em</span>
+      <input type="range" min="0" max="0.12" step="0.01" id="trackingRange" oninput="setPref('tracking', +this.value)">
+    </div>
     <div class="switch">
       <span>专注模式</span>
       <input type="checkbox" id="focusToggle" onchange="setPref('focus', this.checked)" style="accent-color: var(--gold);">
@@ -434,7 +438,7 @@ let serverActiveMs = 0;
 let pendingActiveMs = Number(localStorage.getItem("writing_pending_active") || 0);
 let lastKeyTs = 0;
 let prefs = Object.assign(
-  { tone: "暖黑", fontSize: 19, measure: 760, focus: true },
+  { tone: "暖黑", fontSize: 19, measure: 760, tracking: 0.05, focus: true },
   JSON.parse(localStorage.getItem("writing_prefs") || "{}")
 );
 
@@ -450,12 +454,15 @@ function applyPrefs() {
   r.setProperty("--ink", t.ink);
   r.setProperty("--font-size", prefs.fontSize + "px");
   r.setProperty("--measure", prefs.measure + "px");
+  r.setProperty("--tracking", prefs.tracking + "em");
   editor.classList.toggle("focus-on", prefs.focus);
   if (!prefs.focus) editor.querySelectorAll(".line.dim").forEach((n) => n.classList.remove("dim"));
   $("fontSizeVal").textContent = prefs.fontSize;
   $("measureVal").textContent = prefs.measure;
+  $("trackingVal").textContent = prefs.tracking.toFixed(2);
   $("fontSizeRange").value = prefs.fontSize;
   $("measureRange").value = prefs.measure;
+  $("trackingRange").value = prefs.tracking;
   $("focusToggle").checked = prefs.focus;
   document.querySelectorAll(".tone").forEach((el) =>
     el.classList.toggle("active", el.dataset.tone === prefs.tone));
