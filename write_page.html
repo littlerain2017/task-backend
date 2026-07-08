@@ -363,7 +363,7 @@
         <button class="btn" onclick="newDoc()">新建</button>
         <button class="btn" onclick="copyDoc()">复制</button>
         <button class="btn" onclick="editToken()">令牌</button>
-        <button class="btn" onclick="togglePrefs()">Aa</button>
+        <button class="btn" onclick="togglePrefs()" title="阅读舒适度（⌘D）">Aa</button>
       </div>
     </div>
   </header>
@@ -468,6 +468,14 @@ function setPref(key, val) {
 }
 
 function togglePrefs() { $("prefs").classList.toggle("open"); }
+
+// ⌘D（Windows 上 Ctrl+D）呼出/收起调整面板
+document.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "d") {
+    e.preventDefault();  // 拦截浏览器默认的“添加书签”
+    togglePrefs();
+  }
+});
 document.addEventListener("click", (e) => {
   if (!$("prefs").contains(e.target) && !e.target.closest(".actions")) $("prefs").classList.remove("open");
 });
