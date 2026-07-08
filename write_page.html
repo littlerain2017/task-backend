@@ -190,6 +190,7 @@
   #editor[contenteditable="false"] { color: var(--muted); }
 
   /* ===== 剧本模式（Final Draft 规范：Courier 12pt、55 行/页 ≈ 1 分钟） ===== */
+  /* 颜色完全跟随当前色调，只改字体与版式 */
   #editor.script {
     position: relative;
     font-family: "Courier Prime", "Courier New", Courier, monospace;
@@ -199,12 +200,6 @@
     letter-spacing: 0;
     width: min(74ch, calc(100vw - 24px));
     max-width: none;
-    background: #f2efe6;
-    color: #1d1c1a;
-    caret-color: #8a6d1f;
-    border-radius: 3px;
-    box-shadow: 0 8px 60px rgba(0, 0, 0, 0.55);
-    margin: 32px 0;
     padding: calc(var(--sc-lh) * 2) 0 45vh;
     text-wrap: initial;
   }
@@ -221,8 +216,8 @@
       to bottom,
       transparent 0,
       transparent calc(var(--sc-lh) * 55 - 1px),
-      rgba(138, 109, 31, 0.4) calc(var(--sc-lh) * 55 - 1px),
-      rgba(138, 109, 31, 0.4) calc(var(--sc-lh) * 55)
+      var(--gold-line) calc(var(--sc-lh) * 55 - 1px),
+      var(--gold-line) calc(var(--sc-lh) * 55)
     );
   }
   #editor.script .line {
@@ -246,13 +241,12 @@
   #editor.script .line.sc-paren {
     padding-left: 22ch;
     padding-right: 24ch;
-    color: #5d5545;
+    color: var(--muted);
   }
   #editor.script .line.sc-trans {
     text-align: right;
     text-transform: uppercase;
   }
-  #editor.script ::selection { background: rgba(138, 109, 31, 0.25); }
 
   .btn.on { color: var(--gold); border-color: rgba(211, 178, 92, 0.5); }
 
