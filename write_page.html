@@ -384,7 +384,7 @@ const CJK_RE = /[一-鿿]/g;
 const EN_RE = /[A-Za-z]+(?:'[A-Za-z]+)?/g;
 const SAVE_DEBOUNCE_MS = 4000;
 const REFRESH_MS = 20000;
-const TYPING_IDLE_MS = 60000;
+const TYPING_IDLE_MS = 5000;  // 停笔 5 秒计时即暂停（句内停顿不断流）
 
 const TONES = {
   "暖黑":   { bg: "#171512", header: "rgba(23,21,18,0.82)",  ink: "#e9e2d3" },
