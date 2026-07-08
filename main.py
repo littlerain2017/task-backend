@@ -1143,13 +1143,17 @@ async def writing_uid_from_token(token: str) -> str:
         return ""
 
 
-async def writing_update_progress(uid: str, date_str: str, now_ms: int) -> dict:
+ACTIVE_MS_MAX_PER_REPORT = 30 * 60 * 1000  # 单次上报的写作时长上限，防异常值
+
+
+async def writing_update_progress(uid: str, date_str: str, now_ms: int, active_ms_add: int = 0) -> dict:
     """按用户聚合全部 files 记录，更新当日进度。"""
     all_q = f'db.collection("files").where({{uid:{json.dumps(uid)}}}).limit(1000).get()'
     all_docs = [json.loads(r) for r in (await writing_db("databasequery", all_q)).get("data", [])]
     merged = aggregate_file_docs(all_docs)
     daily_id = f"{uid}:{date_str}"
-    daily = build_daily(uid, date_str, merged, await writing_query_doc("daily", daily_id), now_ms)
+    daily = build_daily(uid, date_str, merged, await writing_query_doc("daily", daily_id), now_ms,
+                        active_ms_add=max(0, min(int(active_ms_add), ACTIVE_MS_MAX_PER_REPORT)))
     await writing_upsert("daily", daily_id, daily)
     return daily
 
@@ -1162,6 +1166,7 @@ async def writing_docs_of(uid: str, with_content: bool):
 
 class DocsListRequest(BaseModel):
     token: str
+    date: str = ""  # 传入当天日期则一并返回当日进度（今日新增/写作时长）
 
 
 class DocsGetRequest(BaseModel):
@@ -1177,6 +1182,7 @@ class DocsPutRequest(BaseModel):
     date: str
     readonly: bool = False
     baseUpdatedAt: Optional[int] = None
+    activeMs: int = 0  # 本次上报新增的实际写作时长（毫秒）
 
 
 class DocsChangesRequest(BaseModel):
@@ -1195,7 +1201,12 @@ async def writing_docs_list(req: DocsListRequest):
     try:
         docs = await writing_docs_of(uid, with_content=False)
         docs.sort(key=lambda d: d.get("name", ""))
-        return {"ok": True, "docs": docs}
+        today = None
+        if req.date and DATE_RE.match(req.date):
+            daily = await writing_query_doc("daily", f"{uid}:{req.date}")
+            if daily:
+                today = {"deltaCjk": daily.get("deltaCjk", 0), "activeMs": daily.get("activeMs", 0)}
+        return {"ok": True, "docs": docs, "today": today}
     except RuntimeError as e:
         print(f"[writing] docs/list 失败: {e}")
         return {"ok": False, "error": "服务器内部错误"}
@@ -1251,8 +1262,9 @@ async def writing_docs_put(req: DocsPutRequest):
             "uid": uid, "source": "sync", "name": req.name,
             "cjk": cjk, "en": en, "updatedAt": now_ms,
         })
-        daily = await writing_update_progress(uid, req.date, now_ms)
-        return {"ok": True, "updatedAt": now_ms, "cjk": cjk, "en": en, "deltaCjk": daily["deltaCjk"]}
+        daily = await writing_update_progress(uid, req.date, now_ms, active_ms_add=req.activeMs)
+        return {"ok": True, "updatedAt": now_ms, "cjk": cjk, "en": en,
+                "deltaCjk": daily["deltaCjk"], "activeMs": daily["activeMs"]}
     except RuntimeError as e:
         print(f"[writing] docs/put 失败: {e}")
         return {"ok": False, "error": "服务器内部错误"}

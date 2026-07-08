@@ -47,6 +47,16 @@ class TestBuildDaily(unittest.TestCase):
         d = build_daily("u1", "2026-07-07", {"a.md": {"cjk": 130, "en": 0}}, calibrated, 2)
         self.assertEqual(d["deltaCjk"], 80)
 
+    def test_active_ms_accumulates(self):
+        first = build_daily("u1", "2026-07-08", {"a.md": {"cjk": 1, "en": 0}}, None, 1, active_ms_add=60000)
+        self.assertEqual(first["activeMs"], 60000)
+        second = build_daily("u1", "2026-07-08", {"a.md": {"cjk": 2, "en": 0}}, first, 2, active_ms_add=30000)
+        self.assertEqual(second["activeMs"], 90000)
+
+    def test_active_ms_negative_ignored(self):
+        d = build_daily("u1", "2026-07-08", {"a.md": {"cjk": 1, "en": 0}}, None, 1, active_ms_add=-500)
+        self.assertEqual(d["activeMs"], 0)
+
     def test_new_file_midday_counts_from_zero(self):
         first = build_daily("u1", "2026-07-07", {"a.md": {"cjk": 100, "en": 0}}, None, 1)
         d = build_daily("u1", "2026-07-07",

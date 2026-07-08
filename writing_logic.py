@@ -10,12 +10,13 @@ def count_text(text):
     return len(CJK_RE.findall(text)), len(EN_WORD_RE.findall(text))
 
 
-def build_daily(uid, date_id, counts, existing_daily, now_ms):
+def build_daily(uid, date_id, counts, existing_daily, now_ms, active_ms_add=0):
     """根据当前上报与已有当日记录，生成新的 daily 文档。
 
     基线规则：当天第一次上报时记录基线；之后基线不变，
     新出现的文件基线视为 0（当天新建的文件）。
     用户在小程序里校准过基线的话，existing_daily 里就是校准后的值，照常沿用。
+    active_ms_add：本次上报新增的实际写作时长（毫秒），累加到当日。
     """
     total_cjk = sum(c["cjk"] for c in counts.values())
     if existing_daily is None:
@@ -30,6 +31,7 @@ def build_daily(uid, date_id, counts, existing_daily, now_ms):
         {"name": n, "cjk": c["cjk"], "en": c["en"], "delta": c["cjk"] - base_map.get(n, 0)}
         for n, c in counts.items()
     ]
+    prev_active = existing_daily.get("activeMs", 0) if existing_daily else 0
     return {
         "uid": uid,
         "date": date_id,
@@ -38,6 +40,7 @@ def build_daily(uid, date_id, counts, existing_daily, now_ms):
         "currentCjk": total_cjk,
         "deltaCjk": total_cjk - baseline_cjk,
         "perFile": per_file,
+        "activeMs": prev_active + max(0, active_ms_add),
         "updatedAt": now_ms,
     }
 

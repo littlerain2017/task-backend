@@ -28,6 +28,7 @@ STATE_PATH = Path.home() / ".writing-watcher-state.json"
 BACKUP_DIR = Path.home() / ".writing-watcher-backups"
 POLL_SECONDS = 2
 PULL_EVERY_SECONDS = 15
+IDLE_GAP_SECONDS = 180  # 两次文件变化间隔超过 3 分钟不计入写作时长
 HTTP_TIMEOUT = 20
 SYNC_EXTENSIONS = (".md", ".txt")      # 双向同步
 READONLY_EXTENSIONS = (".docx",)       # 只上行（网页只读）
@@ -128,15 +129,28 @@ def local_date():
     return date.today().isoformat()
 
 
-def push_changed(cfg, state, files):
+def track_activity(activity, changed_now):
+    """打字活动 → 写作时长：变化间隔 ≤ IDLE_GAP 的部分累计为 pending_ms。"""
+    if not changed_now:
+        return
+    now = time.time()
+    last = activity["last_ts"]
+    if last and now - last <= IDLE_GAP_SECONDS:
+        activity["pending_ms"] += int((now - last) * 1000)
+    activity["last_ts"] = now
+
+
+def push_changed(cfg, state, files, activity):
     for name, f in files.items():
         if state["synced_hashes"].get(name) == f["hash"]:
             continue
         data = post("/writing/docs/put", {
             "token": cfg["token"], "name": name, "content": f["content"],
             "editor": "computer", "readonly": f["readonly"], "date": local_date(),
+            "activeMs": activity["pending_ms"],
         })
         if data.get("ok"):
+            activity["pending_ms"] = 0  # 时长只随第一个成功的推送上报一次
             state["synced_hashes"][name] = f["hash"]
             state["since"] = max(state["since"], data.get("updatedAt", 0))
             log(f"↑ 已推送 {name}（今日新增 {data.get('deltaCjk', '?')} 字）")
@@ -192,11 +206,16 @@ def main():
     log(f"开始同步 {'、'.join(cfg['watch_dirs'])}")
     last_pull = 0.0
     warned = False
+    prev_hashes = None
+    activity = {"last_ts": 0.0, "pending_ms": 0}
     while True:
         try:
             files = scan(cfg["watch_dirs"])
             warned = False
-            push_changed(cfg, state, files)
+            cur_hashes = {n: f["hash"] for n, f in files.items()}
+            track_activity(activity, prev_hashes is not None and cur_hashes != prev_hashes)
+            prev_hashes = cur_hashes
+            push_changed(cfg, state, files, activity)
             if time.time() - last_pull > PULL_EVERY_SECONDS or once:
                 apply_web_changes(cfg, state, files)
                 last_pull = time.time()

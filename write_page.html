@@ -134,7 +134,7 @@
     <button class="btn" onclick="editToken()">令牌</button>
   </header>
   <div class="statusbar">
-    <span class="counts">中文 <b id="cjkCount">0</b> 字 · 英文 <b id="enCount">0</b> 词</span>
+    <span class="counts">中文 <b id="cjkCount">0</b> 字 · 英文 <b id="enCount">0</b> 词 · 写作 <b id="activeTime">0 分钟</b></span>
     <span id="syncState">加载中…</span>
   </div>
   <textarea id="editor" placeholder="选择上方文件开始写…" oninput="onEdit()"></textarea>
@@ -145,11 +145,16 @@ const EN_RE = /[A-Za-z]+(?:'[A-Za-z]+)?/g;
 const SAVE_DEBOUNCE_MS = 4000;
 const REFRESH_MS = 20000;
 
+const TYPING_IDLE_MS = 60000;  // 打字间隔超过 1 分钟不计入写作时长
+
 let token = localStorage.getItem("writing_token") || "";
 let docList = [];
 let current = null;     // {name, updatedAt, readonly}
 let dirty = false;
 let saveTimer = null;
+let serverActiveMs = 0;
+let pendingActiveMs = Number(localStorage.getItem("writing_pending_active") || 0);
+let lastKeyTs = 0;
 
 const $ = (id) => document.getElementById(id);
 
@@ -162,10 +167,27 @@ function counts(text) {
   return { cjk: (text.match(CJK_RE) || []).length, en: (text.match(EN_RE) || []).length };
 }
 
+function fmtActive(ms) {
+  const mins = Math.round(ms / 60000);
+  if (mins < 1) return "不到 1 分钟";
+  if (mins < 60) return `${mins} 分钟`;
+  return `${Math.floor(mins / 60)} 小时 ${mins % 60} 分`;
+}
+
 function renderCounts() {
   const c = counts($("editor").value);
   $("cjkCount").textContent = c.cjk;
   $("enCount").textContent = c.en;
+  $("activeTime").textContent = fmtActive(serverActiveMs + pendingActiveMs);
+}
+
+function trackTyping() {
+  const now = Date.now();
+  if (lastKeyTs && now - lastKeyTs <= TYPING_IDLE_MS) {
+    pendingActiveMs += now - lastKeyTs;
+    localStorage.setItem("writing_pending_active", String(pendingActiveMs));
+  }
+  lastKeyTs = now;
 }
 
 function localDate() {
@@ -197,9 +219,11 @@ function renderSelect() {
 }
 
 async function loadList() {
-  const data = await api("/writing/docs/list", {});
+  const data = await api("/writing/docs/list", { date: localDate() });
   if (!data.ok) throw new Error(data.error);
   docList = data.docs;
+  if (data.today) serverActiveMs = data.today.activeMs || 0;
+  renderCounts();
   renderSelect();
   if (docList.length === 0) {
     setSync("等待电脑首次同步，或点「新建」直接开写", "");
@@ -224,6 +248,7 @@ async function openDoc(name) {
 
 function onEdit() {
   dirty = true;
+  trackTyping();
   renderCounts();
   setSync("编辑中…");
   clearTimeout(saveTimer);
@@ -234,13 +259,19 @@ async function save() {
   if (!current || current.readonly || !dirty) return;
   const content = $("editor").value;
   try {
+    const sentActiveMs = Math.round(pendingActiveMs);
     const data = await api("/writing/docs/put", {
       name: current.name, content, editor: "web",
       date: localDate(), baseUpdatedAt: current.updatedAt,
+      activeMs: sentActiveMs,
     });
     if (data.ok) {
       dirty = false;
       current.updatedAt = data.updatedAt;
+      serverActiveMs = data.activeMs || 0;
+      pendingActiveMs = Math.max(0, pendingActiveMs - sentActiveMs);
+      localStorage.setItem("writing_pending_active", String(pendingActiveMs));
+      renderCounts();
       const t = new Date();
       const p = (n) => String(n).padStart(2, "0");
       setSync(`已同步 ${p(t.getHours())}:${p(t.getMinutes())} · 今日 ${data.deltaCjk >= 0 ? "+" : ""}${data.deltaCjk} 字`, "ok");
