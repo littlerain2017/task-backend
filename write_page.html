@@ -476,13 +476,69 @@ function setPref(key, val) {
 
 function togglePrefs() { $("prefs").classList.toggle("open"); }
 
-// ⌘D（Windows 上 Ctrl+D）呼出/收起调整面板
+// ⌘D（Windows 上 Ctrl+D）呼出/收起调整面板；⌘S 回到上次修改的地方并立即保存
 document.addEventListener("keydown", (e) => {
-  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "d") {
+  if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
+  const key = e.key.toLowerCase();
+  if (key === "d") {
     e.preventDefault();  // 拦截浏览器默认的“添加书签”
     togglePrefs();
+  } else if (key === "s") {
+    e.preventDefault();  // 拦截浏览器默认的“保存网页”
+    jumpToLastEdit();
+    if (dirty) save();
   }
 });
+
+/* ===== 记住并跳回上次修改的位置 ===== */
+let lastEditPos = JSON.parse(localStorage.getItem("writing_lastedit") || "{}");
+
+function rememberEditPos() {
+  const sel = document.getSelection();
+  if (!current || !sel || !sel.anchorNode || !editor.contains(sel.anchorNode)) return;
+  let block = sel.anchorNode;
+  while (block && block.parentNode !== editor) block = block.parentNode;
+  if (!block) return;
+  const lineIndex = Array.prototype.indexOf.call(editor.childNodes, block);
+  const range = document.createRange();
+  range.setStart(block, 0);
+  range.setEnd(sel.anchorNode, sel.anchorOffset);
+  lastEditPos[current.name] = { line: lineIndex, offset: range.toString().length };
+  localStorage.setItem("writing_lastedit", JSON.stringify(lastEditPos));
+}
+
+function jumpToLastEdit() {
+  if (!current) return;
+  const pos = lastEditPos[current.name];
+  if (!pos) return;
+  const block = editor.childNodes[Math.min(pos.line, editor.childNodes.length - 1)];
+  if (!block) return;
+  // 在块内按字符偏移找到落点
+  let remaining = pos.offset;
+  let target = block, targetOffset = 0;
+  const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+  let node;
+  while ((node = walker.nextNode())) {
+    if (remaining <= node.textContent.length) {
+      target = node;
+      targetOffset = remaining;
+      break;
+    }
+    remaining -= node.textContent.length;
+  }
+  editor.focus();
+  const sel = document.getSelection();
+  const range = document.createRange();
+  try {
+    range.setStart(target, targetOffset);
+  } catch (e) {
+    range.setStart(block, 0);
+  }
+  range.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(range);
+  (block.scrollIntoView ? block : editor).scrollIntoView({ behavior: "smooth", block: "center" });
+}
 document.addEventListener("click", (e) => {
   if (!$("prefs").contains(e.target) && !e.target.closest(".actions")) $("prefs").classList.remove("open");
 });
@@ -663,6 +719,7 @@ async function openDoc(name) {
 editor.addEventListener("input", () => {
   dirty = true;
   trackTyping();
+  rememberEditPos();
   reclassify();
   renderCounts();
   setSync("编辑中…", "busy");
