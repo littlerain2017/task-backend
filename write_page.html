@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>写作 · THE ROOM</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600&family=Cormorant+Garamond:wght@500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600&family=Cormorant+Garamond:wght@500;600&family=Courier+Prime:wght@400;700&display=swap" rel="stylesheet">
 <style>
   :root {
     --bg: #171512;
@@ -189,6 +189,73 @@
   #editor.focus-on .line.dim { opacity: 0.28; }
   #editor[contenteditable="false"] { color: var(--muted); }
 
+  /* ===== 剧本模式（Final Draft 规范：Courier 12pt、55 行/页 ≈ 1 分钟） ===== */
+  #editor.script {
+    position: relative;
+    font-family: "Courier Prime", "Courier New", Courier, monospace;
+    --sc-lh: 24px;
+    font-size: 15px;
+    line-height: var(--sc-lh);
+    letter-spacing: 0;
+    width: min(74ch, calc(100vw - 24px));
+    max-width: none;
+    background: #f2efe6;
+    color: #1d1c1a;
+    caret-color: #8a6d1f;
+    border-radius: 3px;
+    box-shadow: 0 8px 60px rgba(0, 0, 0, 0.55);
+    margin: 32px 0;
+    padding: calc(var(--sc-lh) * 2) 0 45vh;
+    text-wrap: initial;
+  }
+  /* 分页线：每 55 行一页（一页一分钟） */
+  #editor.script::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: calc(var(--sc-lh) * 2);
+    bottom: 0;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent calc(var(--sc-lh) * 55 - 1px),
+      rgba(138, 109, 31, 0.4) calc(var(--sc-lh) * 55 - 1px),
+      rgba(138, 109, 31, 0.4) calc(var(--sc-lh) * 55)
+    );
+  }
+  #editor.script .line {
+    margin: 0;
+    text-indent: 0;
+    padding-left: 8ch;
+    padding-right: 8ch;
+  }
+  #editor.script .line.sc-scene {
+    text-transform: uppercase;
+    font-weight: 700;
+  }
+  #editor.script .line.sc-char {
+    padding-left: 28ch;
+    text-transform: uppercase;
+  }
+  #editor.script .line.sc-dial {
+    padding-left: 18ch;
+    padding-right: 20ch;
+  }
+  #editor.script .line.sc-paren {
+    padding-left: 22ch;
+    padding-right: 24ch;
+    color: #5d5545;
+  }
+  #editor.script .line.sc-trans {
+    text-align: right;
+    text-transform: uppercase;
+  }
+  #editor.script ::selection { background: rgba(138, 109, 31, 0.25); }
+
+  .btn.on { color: var(--gold); border-color: rgba(211, 178, 92, 0.5); }
+
   /* ===== 计时器胶囊 ===== */
   .timer {
     position: fixed;
@@ -329,6 +396,7 @@
       <div class="wordmark">THE ROOM</div>
       <div class="doc-box"><select id="docSelect" onchange="openDoc(this.value)"></select></div>
       <div class="actions">
+        <button class="btn" id="modeBtn" onclick="toggleScriptMode()" title="剧本模式（Final Draft 格式）">剧本</button>
         <button class="btn" onclick="newDoc()">新建</button>
         <button class="btn" onclick="copyDoc()">复制</button>
         <button class="btn" onclick="editToken()">令牌</button>
@@ -338,7 +406,7 @@
   </header>
 
   <div class="meta">
-    <div>中文 <b id="cjkCount">0</b> 字 <span class="dot-sep">·</span> 英文 <b id="enCount">0</b> 词</div>
+    <div>中文 <b id="cjkCount">0</b> 字 <span class="dot-sep">·</span> 英文 <b id="enCount">0</b> 词<span id="pageInfo" style="display:none"><span class="dot-sep">·</span>约 <b id="pageCount">1</b> 页 / <b id="minCount">1</b> 分钟</span></div>
     <div class="sync">
       <span class="sync-dot" id="syncDot"></span>
       <span id="syncText">加载中…</span>
@@ -532,6 +600,83 @@ Object.keys(TONES).forEach((name) => {
   $("toneRow").appendChild(el);
 });
 
+/* ===== 剧本模式（Final Draft 元素识别） ===== */
+const LINES_PER_PAGE = 55;  // 一页一分钟
+const SCENE_RE = /^(INT|EXT|EST|I\/E|INT\/EXT)[.\s]|^(内景|外景|内[.．·]|外[.．·])/i;
+const TRANS_RE = /^>|TO:\s*$|^(FADE (IN|OUT)|CUT TO|DISSOLVE)|(切至|转场|淡入|淡出)[:：]?\s*$/i;
+const CHAR_LATIN_RE = /^[A-Z][A-Z0-9 .'\-()]{0,31}$/;
+const PAREN_RE = /^[(（]/;
+const SENTENCE_END_RE = /[。！？…，,.;；、!?]$/;
+const HAS_CJK_RE = /[一-鿿]/;
+
+let scriptModes = JSON.parse(localStorage.getItem("writing_script_modes") || "{}");
+
+function isScriptMode() {
+  if (!current) return false;
+  if (current.name in scriptModes) return scriptModes[current.name];
+  return /剧本|screenplay|script|scene|\.fountain$/i.test(current.name);  // 按文件名自动开启
+}
+
+function toggleScriptMode() {
+  if (!current) return;
+  scriptModes[current.name] = !isScriptMode();
+  localStorage.setItem("writing_script_modes", JSON.stringify(scriptModes));
+  applyMode();
+  reclassify();
+  renderCounts();
+}
+
+function applyMode() {
+  const on = isScriptMode();
+  editor.classList.toggle("script", on);
+  $("modeBtn").classList.toggle("on", on);
+  $("pageInfo").style.display = on ? "" : "none";
+}
+
+/** 剧本元素识别：整篇有状态扫描（对白依赖前一行是角色） */
+function classifyScriptLines(lines) {
+  const types = [];
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i].trim();
+    const prev = i > 0 ? types[i - 1] : "blank";
+    const next = i + 1 < lines.length ? lines[i + 1].trim() : "";
+    let type;
+    if (t === "") type = "blank";
+    else if (SCENE_RE.test(t)) type = "scene";
+    else if (TRANS_RE.test(t)) type = "trans";
+    else if (PAREN_RE.test(t) && (prev === "char" || prev === "dial" || prev === "paren")) type = "paren";
+    else if (prev === "char" || prev === "paren" || prev === "dial") type = "dial";
+    else if (prev === "blank" && next !== "" &&
+             (t.startsWith("@") || CHAR_LATIN_RE.test(t) ||
+              (HAS_CJK_RE.test(t) && t.length <= 8 && !SENTENCE_END_RE.test(t)))) type = "char";
+    else type = "action";
+    types.push(type);
+  }
+  return types;
+}
+
+const SCRIPT_CLASS = { blank: "blank", scene: "sc-scene", trans: "sc-trans",
+                       paren: "sc-paren", dial: "sc-dial", char: "sc-char", action: "sc-action" };
+// 各元素每行可容纳的列数（中文按 2 列计），用于估算换行后的实际行数
+const SCRIPT_CPL = { scene: 58, action: 58, dial: 36, paren: 28, char: 40, trans: 58, blank: 58 };
+
+function colWidth(text) {
+  let w = 0;
+  for (const ch of text) w += /[ᄀ-￦]/.test(ch) ? 2 : 1;
+  return w;
+}
+
+function updatePageInfo(lines, types) {
+  let total = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i].trim();
+    total += t === "" ? 1 : Math.max(1, Math.ceil(colWidth(t) / SCRIPT_CPL[types[i]]));
+  }
+  const pages = Math.max(1, Math.ceil(total / LINES_PER_PAGE));
+  $("pageCount").textContent = pages;
+  $("minCount").textContent = pages;
+}
+
 /* ===== 逐行渲染编辑器 ===== */
 function classify(text) {
   if (/^---+\s*$/.test(text)) return "rule";
@@ -570,12 +715,21 @@ function getEditorContent() {
 }
 
 function reclassify() {
-  editor.childNodes.forEach((node) => {
-    if (node.nodeType !== Node.ELEMENT_NODE) return;
-    const cls = ("line " + classify(node.textContent)).trim();
+  const nodes = Array.prototype.filter.call(editor.childNodes, (n) => n.nodeType === Node.ELEMENT_NODE);
+  const script = isScriptMode();
+  let types = null;
+  let lines = null;
+  if (script) {
+    lines = nodes.map((n) => n.textContent);
+    types = classifyScriptLines(lines);
+  }
+  nodes.forEach((node, i) => {
+    const kind = script ? SCRIPT_CLASS[types[i]] : classify(node.textContent);
+    const cls = ("line " + kind).trim();
     const keepDim = node.classList.contains("dim") ? " dim" : "";
     if (node.className !== cls + keepDim) node.className = cls + keepDim;
   });
+  if (script) updatePageInfo(lines, types);
 }
 
 editor.addEventListener("paste", (e) => {
@@ -707,6 +861,8 @@ async function openDoc(name) {
   localStorage.setItem("writing_last_doc", name);
   setEditorContent(data.content);
   editor.contentEditable = data.readonly ? "false" : "true";
+  applyMode();
+  reclassify();
   renderCounts();
   renderSelect();
   setSync(data.readonly ? "只读（Word 文档请在电脑上编辑）" : "已就绪", "ok");
