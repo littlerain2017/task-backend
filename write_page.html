@@ -213,9 +213,10 @@
     white-space: nowrap;
   }
   .timer .clock {
-    font-size: 16px;
+    font-size: 22px;
     font-weight: 500;
     font-variant-numeric: tabular-nums;
+    letter-spacing: 0.04em;
     text-align: center;
     color: #beb5a2;
     transition: color 0.3s;
@@ -349,8 +350,8 @@
   <main id="editor" contenteditable="true" spellcheck="false"></main>
 
   <div class="timer" title="今日实际打字时长，自动计时，停笔 1 分钟暂停">
-    <span class="t-label">今日写作</span>
-    <span class="clock" id="activeClock">0:00</span>
+    <span class="t-label">写作时长</span>
+    <span class="clock" id="activeClock">00:00</span>
   </div>
 
   <div class="fade"></div>
@@ -649,7 +650,7 @@ function renderActiveClock() {
   const m = Math.floor((totalSec % 3600) / 60);
   const s = totalSec % 60;
   const p = (n) => String(n).padStart(2, "0");
-  $("activeClock").textContent = h > 0 ? `${h}:${p(m)}:${p(s)}` : `${m}:${p(s)}`;
+  $("activeClock").textContent = h > 0 ? `${p(h)}:${p(m)}:${p(s)}` : `${p(m)}:${p(s)}`;
   $("activeClock").classList.toggle("running", isTypingNow());
 }
 
