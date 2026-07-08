@@ -1127,10 +1127,20 @@ def content_decode(b64: str) -> str:
     return base64.b64decode(b64.encode("ascii")).decode("utf-8")
 
 
+WRITING_TOKEN_RE = re.compile(r"^[A-Za-z0-9\-]{4,64}$")
+
+
 async def writing_uid_from_token(token: str) -> str:
-    q = f'db.collection("devices").where({{token:{json.dumps(token)}}}).limit(1).get()'
-    rows = (await writing_db("databasequery", q)).get("data", [])
-    return json.loads(rows[0]).get("_openid", "") if rows else ""
+    """令牌 → openid。畸形令牌或云端异常一律返回空串，绝不抛异常。"""
+    if not WRITING_TOKEN_RE.match(token or ""):
+        return ""
+    try:
+        q = f'db.collection("devices").where({{token:{json.dumps(token)}}}).limit(1).get()'
+        rows = (await writing_db("databasequery", q)).get("data", [])
+        return json.loads(rows[0]).get("_openid", "") if rows else ""
+    except RuntimeError as e:
+        print(f"[writing] 令牌校验失败: {e}")
+        return ""
 
 
 async def writing_update_progress(uid: str, date_str: str, now_ms: int) -> dict:

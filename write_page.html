@@ -171,6 +171,7 @@ async function api(path, payload) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ token, ...payload }),
   });
+  if (!resp.ok) throw new Error(`服务器错误 ${resp.status}`);
   return resp.json();
 }
 
