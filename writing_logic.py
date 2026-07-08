@@ -1,4 +1,13 @@
-"""写作进度：纯逻辑（每日基线与新增计算），与框架无关，便于单测。"""
+"""写作进度：纯逻辑（字数统计、每日基线与新增计算），与框架无关，便于单测。"""
+import re
+
+CJK_RE = re.compile(r"[一-鿿]")
+EN_WORD_RE = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
+
+
+def count_text(text):
+    """返回 (中文字符数, 英文单词数)，与各客户端口径一致。"""
+    return len(CJK_RE.findall(text)), len(EN_WORD_RE.findall(text))
 
 
 def build_daily(uid, date_id, counts, existing_daily, now_ms):

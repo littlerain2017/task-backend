@@ -1,7 +1,15 @@
 """writing_logic 单元测试。"""
 import unittest
 
-from writing_logic import aggregate_file_docs, build_daily, normalize_files
+from writing_logic import aggregate_file_docs, build_daily, count_text, normalize_files
+
+
+class TestCountText(unittest.TestCase):
+    def test_counts(self):
+        self.assertEqual(count_text("她说 OK it's fine。"), (2, 3))
+
+    def test_empty(self):
+        self.assertEqual(count_text(""), (0, 0))
 
 
 class TestAggregateFileDocs(unittest.TestCase):

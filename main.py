@@ -973,7 +973,9 @@ async def startup():
 import re
 import time as time_mod
 from fastapi.responses import HTMLResponse, PlainTextResponse
-from writing_logic import aggregate_file_docs, build_daily, normalize_files
+import hashlib
+from typing import Optional
+from writing_logic import aggregate_file_docs, build_daily, count_text, normalize_files
 
 WRITING_APPID = os.environ.get("WRITING_APPID", "wxff2f10ce15321b4a")
 WRITING_APPSECRET = os.environ.get("WRITING_APPSECRET", "af1333432c29946412e52b37c805d836")
@@ -1103,6 +1105,171 @@ async def writing_report(req: WritingReportRequest):
     except RuntimeError as e:
         print(f"[writing] 上报失败: {e}")
         return {"ok": False, "error": "服务器内部错误，稍后自动重试"}
+
+
+# ---------- 内容级同步：网页与电脑编辑同一批文件 ----------
+DOC_NAME_RE = re.compile(r"^[^/\\]{1,120}$")
+DOC_MAX_CHARS = 200_000
+EDITORS = ("web", "computer")
+
+
+def content_hash(text: str) -> str:
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
+
+
+async def writing_uid_from_token(token: str) -> str:
+    q = f'db.collection("devices").where({{token:{json.dumps(token)}}}).limit(1).get()'
+    rows = (await writing_db("databasequery", q)).get("data", [])
+    return json.loads(rows[0]).get("_openid", "") if rows else ""
+
+
+async def writing_update_progress(uid: str, date_str: str, now_ms: int) -> dict:
+    """按用户聚合全部 files 记录，更新当日进度。"""
+    all_q = f'db.collection("files").where({{uid:{json.dumps(uid)}}}).limit(1000).get()'
+    all_docs = [json.loads(r) for r in (await writing_db("databasequery", all_q)).get("data", [])]
+    merged = aggregate_file_docs(all_docs)
+    daily_id = f"{uid}:{date_str}"
+    daily = build_daily(uid, date_str, merged, await writing_query_doc("daily", daily_id), now_ms)
+    await writing_upsert("daily", daily_id, daily)
+    return daily
+
+
+async def writing_docs_of(uid: str, with_content: bool):
+    field = "" if with_content else '.field({name:true,updatedAt:true,editor:true,hash:true,cjk:true,en:true,readonly:true})'
+    q = f'db.collection("docs").where({{uid:{json.dumps(uid)}}}).limit(1000){field}.get()'
+    return [json.loads(r) for r in (await writing_db("databasequery", q)).get("data", [])]
+
+
+class DocsListRequest(BaseModel):
+    token: str
+
+
+class DocsGetRequest(BaseModel):
+    token: str
+    name: str
+
+
+class DocsPutRequest(BaseModel):
+    token: str
+    name: str
+    content: str
+    editor: str
+    date: str
+    readonly: bool = False
+    baseUpdatedAt: Optional[int] = None
+
+
+class DocsChangesRequest(BaseModel):
+    token: str
+    since: int
+    names: list  # 本地磁盘当前存在的文件名，用于清理已删除文件
+    date: str
+
+
+@app.post("/writing/docs/list")
+async def writing_docs_list(req: DocsListRequest):
+    uid = await writing_uid_from_token(req.token)
+    if not uid:
+        return {"ok": False, "error": "无效令牌"}
+    try:
+        docs = await writing_docs_of(uid, with_content=False)
+        docs.sort(key=lambda d: d.get("name", ""))
+        return {"ok": True, "docs": docs}
+    except RuntimeError as e:
+        print(f"[writing] docs/list 失败: {e}")
+        return {"ok": False, "error": "服务器内部错误"}
+
+
+@app.post("/writing/docs/get")
+async def writing_docs_get(req: DocsGetRequest):
+    uid = await writing_uid_from_token(req.token)
+    if not uid:
+        return {"ok": False, "error": "无效令牌"}
+    try:
+        doc = await writing_query_doc("docs", f"{uid}:{req.name}")
+        if doc is None:
+            return {"ok": False, "error": "文件不存在"}
+        return {"ok": True, "content": doc.get("content", ""),
+                "updatedAt": doc.get("updatedAt", 0), "readonly": doc.get("readonly", False)}
+    except RuntimeError as e:
+        print(f"[writing] docs/get 失败: {e}")
+        return {"ok": False, "error": "服务器内部错误"}
+
+
+@app.post("/writing/docs/put")
+async def writing_docs_put(req: DocsPutRequest):
+    if not DOC_NAME_RE.match(req.name) or req.name.startswith("."):
+        return {"ok": False, "error": "非法文件名"}
+    if req.editor not in EDITORS:
+        return {"ok": False, "error": "非法编辑来源"}
+    if not DATE_RE.match(req.date):
+        return {"ok": False, "error": "日期格式应为 YYYY-MM-DD"}
+    if len(req.content) > DOC_MAX_CHARS:
+        return {"ok": False, "error": f"单文件最长 {DOC_MAX_CHARS} 字符"}
+    uid = await writing_uid_from_token(req.token)
+    if not uid:
+        return {"ok": False, "error": "无效令牌"}
+    try:
+        doc_id = f"{uid}:{req.name}"
+        existing = await writing_query_doc("docs", doc_id)
+        if existing and existing.get("readonly") and req.editor == "web":
+            return {"ok": False, "error": "该文件为只读（Word 文档请在电脑上编辑）"}
+        # 网页保存时校验版本，避免覆盖电脑刚写的内容；电脑保存以磁盘为准
+        if (req.editor == "web" and req.baseUpdatedAt is not None and existing
+                and existing.get("updatedAt") != req.baseUpdatedAt):
+            return {"ok": False, "conflict": True, "error": "文件已在电脑上更新"}
+
+        now_ms = int(time_mod.time() * 1000)
+        cjk, en = count_text(req.content)
+        await writing_upsert("docs", doc_id, {
+            "uid": uid, "name": req.name, "content": req.content,
+            "hash": content_hash(req.content), "editor": req.editor,
+            "readonly": req.readonly, "cjk": cjk, "en": en, "updatedAt": now_ms,
+        })
+        await writing_upsert("files", f"{uid}:sync:{req.name}", {
+            "uid": uid, "source": "sync", "name": req.name,
+            "cjk": cjk, "en": en, "updatedAt": now_ms,
+        })
+        daily = await writing_update_progress(uid, req.date, now_ms)
+        return {"ok": True, "updatedAt": now_ms, "cjk": cjk, "en": en, "deltaCjk": daily["deltaCjk"]}
+    except RuntimeError as e:
+        print(f"[writing] docs/put 失败: {e}")
+        return {"ok": False, "error": "服务器内部错误"}
+
+
+@app.post("/writing/docs/changes")
+async def writing_docs_changes(req: DocsChangesRequest):
+    """watcher 轮询：取回网页端的修改；顺带清理本地已删除的文件。"""
+    uid = await writing_uid_from_token(req.token)
+    if not uid:
+        return {"ok": False, "error": "无效令牌"}
+    if not DATE_RE.match(req.date):
+        return {"ok": False, "error": "日期格式应为 YYYY-MM-DD"}
+    try:
+        metas = await writing_docs_of(uid, with_content=False)
+        changed = []
+        removed = []
+        local_names = set(n for n in req.names if isinstance(n, str))
+        for m in metas:
+            name = m.get("name", "")
+            if m.get("editor") == "web" and m.get("updatedAt", 0) > req.since:
+                full = await writing_query_doc("docs", f"{uid}:{name}")
+                if full:
+                    changed.append({"name": name, "content": full.get("content", ""),
+                                    "updatedAt": full.get("updatedAt", 0)})
+            # 只清理「最后一次由电脑编辑」且本地已不存在的文件——网页新建未落盘的文件绝不动
+            elif m.get("editor") == "computer" and local_names and name not in local_names:
+                await writing_db("databasedelete",
+                                 f'db.collection("docs").where({{_id:{json.dumps(f"{uid}:{name}")}}}).remove()')
+                await writing_db("databasedelete",
+                                 f'db.collection("files").where({{_id:{json.dumps(f"{uid}:sync:{name}")}}}).remove()')
+                removed.append(name)
+        if removed:
+            await writing_update_progress(uid, req.date, int(time_mod.time() * 1000))
+        return {"ok": True, "changed": changed, "removed": removed}
+    except RuntimeError as e:
+        print(f"[writing] docs/changes 失败: {e}")
+        return {"ok": False, "error": "服务器内部错误"}
 
 
 @app.get("/write")
