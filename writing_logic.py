@@ -17,28 +17,35 @@ def build_daily(uid, date_id, counts, existing_daily, now_ms, active_ms_add=0):
     新出现的文件基线视为 0（当天新建的文件）。
     用户在小程序里校准过基线的话，existing_daily 里就是校准后的值，照常沿用。
     active_ms_add：本次上报新增的实际写作时长（毫秒），累加到当日。
+
+    字数单位 = 汉字数 + 英文单词数（中英写作等权计入进度）。
+    注意：daily 文档里的 baselineCjk/currentCjk/deltaCjk 与 basePerFile 的 cjk
+    字段名保留历史命名，实际存的都是该单位。
     """
-    total_cjk = sum(c["cjk"] for c in counts.values())
+    def units(c):
+        return c["cjk"] + c["en"]
+
+    total_units = sum(units(c) for c in counts.values())
     if existing_daily is None:
-        baseline_cjk = total_cjk
-        base_per_file = [{"name": n, "cjk": c["cjk"]} for n, c in counts.items()]
+        baseline_units = total_units
+        base_per_file = [{"name": n, "cjk": units(c)} for n, c in counts.items()]
     else:
-        baseline_cjk = existing_daily["baselineCjk"]
+        baseline_units = existing_daily["baselineCjk"]
         base_per_file = existing_daily["basePerFile"]
 
     base_map = {b["name"]: b["cjk"] for b in base_per_file}
     per_file = [
-        {"name": n, "cjk": c["cjk"], "en": c["en"], "delta": c["cjk"] - base_map.get(n, 0)}
+        {"name": n, "cjk": c["cjk"], "en": c["en"], "delta": units(c) - base_map.get(n, 0)}
         for n, c in counts.items()
     ]
     prev_active = existing_daily.get("activeMs", 0) if existing_daily else 0
     return {
         "uid": uid,
         "date": date_id,
-        "baselineCjk": baseline_cjk,
+        "baselineCjk": baseline_units,
         "basePerFile": base_per_file,
-        "currentCjk": total_cjk,
-        "deltaCjk": total_cjk - baseline_cjk,
+        "currentCjk": total_units,
+        "deltaCjk": total_units - baseline_units,
         "perFile": per_file,
         "activeMs": prev_active + max(0, active_ms_add),
         "updatedAt": now_ms,

@@ -29,10 +29,10 @@ class TestAggregateFileDocs(unittest.TestCase):
 
 
 class TestBuildDaily(unittest.TestCase):
-    def test_first_report_sets_baseline(self):
+    def test_first_report_sets_baseline_with_en_units(self):
         counts = {"a.md": {"cjk": 100, "en": 5}}
         d = build_daily("u1", "2026-07-07", counts, None, 1000)
-        self.assertEqual(d["baselineCjk"], 100)
+        self.assertEqual(d["baselineCjk"], 105)  # 汉字 + 英文单词
         self.assertEqual(d["deltaCjk"], 0)
         self.assertEqual(d["uid"], "u1")
         self.assertEqual(d["date"], "2026-07-07")
@@ -41,6 +41,12 @@ class TestBuildDaily(unittest.TestCase):
         first = build_daily("u1", "2026-07-07", {"a.md": {"cjk": 100, "en": 0}}, None, 1)
         d = build_daily("u1", "2026-07-07", {"a.md": {"cjk": 130, "en": 0}}, first, 2)
         self.assertEqual(d["deltaCjk"], 30)
+
+    def test_english_words_count_into_delta(self):
+        first = build_daily("u1", "2026-07-07", {"a.md": {"cjk": 100, "en": 50}}, None, 1)
+        d = build_daily("u1", "2026-07-07", {"a.md": {"cjk": 100, "en": 80}}, first, 2)
+        self.assertEqual(d["deltaCjk"], 30)  # 只写英文也计入
+        self.assertEqual(d["perFile"][0]["delta"], 30)
 
     def test_calibrated_baseline_respected(self):
         calibrated = {"baselineCjk": 50, "basePerFile": [{"name": "a.md", "cjk": 50}]}
