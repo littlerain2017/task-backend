@@ -159,7 +159,9 @@ def push_changed(cfg, state, files, activity):
     save_state(state)
 
 
-def apply_web_changes(cfg, state, files):
+def apply_web_changes(cfg, state, files, prev_hashes):
+    """拉取网页端修改写回本地。写回的文件同步更新 prev_hashes，
+    避免下一轮扫描把写回误判成本地打字（虚增写作时长）。"""
     # 曾经同步到过磁盘、现在本地已删除的文件 → 明确通知云端删除
     locally_deleted = [n for n in state["synced_hashes"] if n not in files]
     data = post("/writing/docs/changes", {
@@ -192,6 +194,8 @@ def apply_web_changes(cfg, state, files):
                 path.read_text(encoding="utf-8"), encoding="utf-8")
         path.write_text(content, encoding="utf-8")
         state["synced_hashes"][name] = incoming_hash
+        if prev_hashes is not None:
+            prev_hashes[name] = incoming_hash
         log(f"↓ 网页修改已写回 {name}（原文件已备份）")
     for name in data.get("removed", []):
         state["synced_hashes"].pop(name, None)
@@ -217,7 +221,7 @@ def main():
             prev_hashes = cur_hashes
             push_changed(cfg, state, files, activity)
             if time.time() - last_pull > PULL_EVERY_SECONDS or once:
-                apply_web_changes(cfg, state, files)
+                apply_web_changes(cfg, state, files, prev_hashes)
                 last_pull = time.time()
         except RuntimeError as e:
             if not warned:
