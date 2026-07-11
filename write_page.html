@@ -133,7 +133,26 @@
     flex-wrap: wrap;
   }
   .meta b { color: var(--gold); font-weight: 500; }
-  .meta .dot-sep { opacity: 0.5; margin: 0 6px; }
+  .dot-sep { opacity: 0.5; margin: 0 6px; }
+
+  /* 实时字数：右上角悬浮胶囊（与右下角计时器同款） */
+  .count-pill {
+    position: fixed;
+    top: 72px;
+    right: 24px;
+    z-index: 20;
+    background: rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--gold-line);
+    border-radius: 999px;
+    padding: 8px 18px;
+    font-size: 13px;
+    color: var(--muted);
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+  .count-pill b { color: var(--gold); font-weight: 500; font-variant-numeric: tabular-nums; }
   .sync { display: flex; align-items: center; gap: 8px; }
   .sync-dot {
     width: 6px;
@@ -382,6 +401,7 @@
     .meta { padding: 16px 16px 0; }
     #editor { padding: 32px 16px 45vh; }
     .timer { bottom: 14px; right: 12px; gap: 9px; padding: 7px 8px 7px 13px; }
+    .count-pill { top: 60px; right: 12px; padding: 6px 13px; font-size: 12px; }
   }
 </style>
 </head>
@@ -407,8 +427,12 @@
     </div>
   </header>
 
+  <!-- 实时字数：右上角常驻 -->
+  <div class="count-pill">
+    中文 <b id="cjkCount">0</b> 字 <span class="dot-sep">·</span> 英文 <b id="enCount">0</b> 词<span id="pageInfo" style="display:none"><span class="dot-sep">·</span>约 <b id="pageCount">1</b> 页 / <b id="minCount">1</b> 分钟</span>
+  </div>
+
   <div class="meta">
-    <div>中文 <b id="cjkCount">0</b> 字 <span class="dot-sep">·</span> 英文 <b id="enCount">0</b> 词<span id="pageInfo" style="display:none"><span class="dot-sep">·</span>约 <b id="pageCount">1</b> 页 / <b id="minCount">1</b> 分钟</span></div>
     <div class="sync">
       <span class="sync-dot" id="syncDot"></span>
       <span id="syncText">加载中…</span>
