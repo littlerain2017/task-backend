@@ -447,17 +447,16 @@
     </div>
   </header>
 
-  <!-- 实时字数：右上角常驻 -->
+  <!-- 今日新增：右上角常驻（与小程序大数字同源） -->
   <div class="count-pill">
-    中文 <b id="cjkCount">0</b> 字 <span class="dot-sep">·</span> 英文 <b id="enCount">0</b> 词<span id="pageInfo" style="display:none"><span class="dot-sep">·</span>约 <b id="pageCount">1</b> 页 / <b id="minCount">1</b> 分钟</span>
+    今日 <b id="todayDelta">+0</b> 字
   </div>
 
   <div class="meta">
+    <div>中文 <b id="cjkCount">0</b> 字 <span class="dot-sep">·</span> 英文 <b id="enCount">0</b> 词<span id="pageInfo" style="display:none"><span class="dot-sep">·</span>约 <b id="pageCount">1</b> 页 / <b id="minCount">1</b> 分钟</span></div>
     <div class="sync">
       <span class="sync-dot" id="syncDot"></span>
       <span id="syncText">加载中…</span>
-      <span class="dot-sep">·</span>
-      <span class="today" id="todayDelta">今日 0 字</span>
     </div>
   </div>
 
@@ -889,7 +888,7 @@ function setSync(text, cls) {
 
 function setTodayDelta(delta) {
   if (typeof delta !== "number") return;
-  $("todayDelta").textContent = `今日 ${delta >= 0 ? "+" : ""}${delta} 字`;
+  $("todayDelta").textContent = `${delta >= 0 ? "+" : ""}${delta.toLocaleString()}`;
 }
 
 function trackTyping() {
