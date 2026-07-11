@@ -376,6 +376,50 @@
   #prefs input[type="range"] { width: 100%; accent-color: var(--gold); }
   .switch { display: flex; justify-content: space-between; align-items: center; color: var(--ink-soft); }
 
+  /* ===== 书签总览面板 ===== */
+  #marksPanel {
+    position: fixed;
+    top: 64px;
+    right: 16px;
+    z-index: 30;
+    width: 320px;
+    max-width: calc(100vw - 32px);
+    max-height: 70vh;
+    overflow-y: auto;
+    background: var(--header);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--gold-line);
+    border-radius: 12px;
+    padding: 14px;
+    display: none;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 13px;
+  }
+  #marksPanel.open { display: flex; }
+  #marksPanel .mp-doc {
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    color: var(--gold);
+    padding: 10px 6px 4px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 4px;
+  }
+  #marksPanel .mp-item {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    padding: 7px 8px;
+    border-radius: 8px;
+    color: var(--ink-soft);
+    cursor: pointer;
+    line-height: 1.6;
+  }
+  #marksPanel .mp-item:hover { background: rgba(211, 178, 92, 0.10); color: var(--ink); }
+  #marksPanel .mp-item .bk { font-size: 11px; flex-shrink: 0; }
+  #marksPanel .mp-empty { color: var(--muted); text-align: center; padding: 24px 8px; line-height: 1.9; }
+
   /* ===== 令牌配置浮层 ===== */
   #setup {
     position: fixed;
@@ -441,6 +485,7 @@
         <button class="btn" onclick="newDoc()">新建</button>
         <button class="btn" onclick="copyDoc()">复制</button>
         <button class="btn" onclick="toggleMark()" title="标记/取消标记当前段落（⌘M），⌘⇧M 跳转书签">标记</button>
+        <button class="btn" onclick="toggleMarksPanel()" title="查看全部书签">书签</button>
         <button class="btn" onclick="editToken()">令牌</button>
         <button class="btn" onclick="togglePrefs()" title="阅读舒适度（⌘D）">Aa</button>
       </div>
@@ -468,6 +513,8 @@
   </div>
 
   <div class="fade"></div>
+
+  <div id="marksPanel"></div>
 
   <div id="prefs">
     <div class="row">
@@ -608,9 +655,78 @@ function toggleMark() {
     setSync("已标记 🔖（⌘⇧M 可跳转回来）", "ok");
   }
   current.marks = Array.from(marks);
+  const meta = docList.find((d) => d.name === current.name);
+  if (meta) meta.marks = current.marks;  // 书签面板保持最新
   applyMarks();
   api("/writing/docs/marks", { name: current.name, marks: current.marks })
     .catch(() => setSync("书签保存失败，稍后自动重试", "err"));
+}
+
+/* ===== 书签总览面板 ===== */
+async function toggleMarksPanel() {
+  const panel = $("marksPanel");
+  if (panel.classList.contains("open")) {
+    panel.classList.remove("open");
+    return;
+  }
+  try { await loadList(); } catch (e) { /* 用缓存的 docList 也能渲染 */ }
+  renderMarksPanel();
+  panel.classList.add("open");
+}
+
+function renderMarksPanel() {
+  const panel = $("marksPanel");
+  panel.innerHTML = "";
+  let total = 0;
+  docList.forEach((d) => {
+    const marks = d.marks || [];
+    if (marks.length === 0) return;
+    total += marks.length;
+    const head = document.createElement("div");
+    head.className = "mp-doc";
+    head.textContent = d.name;
+    panel.appendChild(head);
+    marks.forEach((text) => {
+      const item = document.createElement("div");
+      item.className = "mp-item";
+      const bk = document.createElement("span");
+      bk.className = "bk";
+      bk.textContent = "🔖";
+      const span = document.createElement("span");
+      span.textContent = text.length > 42 ? text.slice(0, 42) + "…" : text;
+      item.appendChild(bk);
+      item.appendChild(span);
+      item.onclick = () => gotoMark(d.name, text);
+      panel.appendChild(item);
+    });
+  });
+  if (total === 0) {
+    const empty = document.createElement("div");
+    empty.className = "mp-empty";
+    empty.textContent = "还没有书签。光标放进段落里按 ⌘M（或点「标记」）就能收藏在这里。";
+    panel.appendChild(empty);
+  }
+}
+
+async function gotoMark(name, text) {
+  $("marksPanel").classList.remove("open");
+  if (!current || current.name !== name) await openDoc(name);
+  const target = Array.prototype.find.call(
+    editor.childNodes,
+    (n) => n.nodeType === Node.ELEMENT_NODE && n.textContent.trim() === text
+  );
+  if (!target) {
+    setSync("该书签对应的段落已被修改或删除", "");
+    return;
+  }
+  editor.focus();
+  const sel = document.getSelection();
+  const range = document.createRange();
+  range.setStart(target, 0);
+  range.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(range);
+  target.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
 function jumpNextMark() {
@@ -698,6 +814,7 @@ function jumpToLastEdit() {
 }
 document.addEventListener("click", (e) => {
   if (!$("prefs").contains(e.target) && !e.target.closest(".actions")) $("prefs").classList.remove("open");
+  if (!$("marksPanel").contains(e.target) && !e.target.closest(".actions")) $("marksPanel").classList.remove("open");
 });
 
 Object.keys(TONES).forEach((name) => {

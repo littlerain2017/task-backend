@@ -1159,7 +1159,7 @@ async def writing_update_progress(uid: str, date_str: str, now_ms: int, active_m
 
 
 async def writing_docs_of(uid: str, with_content: bool):
-    field = "" if with_content else '.field({name:true,updatedAt:true,editor:true,hash:true,cjk:true,en:true,readonly:true})'
+    field = "" if with_content else '.field({name:true,updatedAt:true,editor:true,hash:true,cjk:true,en:true,readonly:true,marks:true})'
     q = f'db.collection("docs").where({{uid:{json.dumps(uid)}}}).limit(1000){field}.get()'
     return [json.loads(r) for r in (await writing_db("databasequery", q)).get("data", [])]
 
