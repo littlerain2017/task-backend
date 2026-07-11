@@ -208,6 +208,25 @@
   #editor.focus-on .line.dim { opacity: 0.28; }
   #editor[contenteditable="false"] { color: var(--muted); }
 
+  /* 段落书签：鎏金左线 + 微金底 + 🔖 */
+  #editor .line.marked {
+    background: rgba(211, 178, 92, 0.07);
+    border-left: 3px solid var(--gold);
+    padding-left: 14px;
+    margin-left: -17px;
+    border-radius: 2px;
+    position: relative;
+  }
+  #editor .line.marked::after {
+    content: "🔖";
+    position: absolute;
+    right: -4px;
+    top: 0;
+    font-size: 0.7em;
+    opacity: 0.7;
+  }
+  #editor.focus-on .line.marked.dim { opacity: 0.55; }  /* 专注模式下书签段落也别太暗 */
+
   /* ===== 剧本模式（Final Draft 规范：Courier 12pt、55 行/页 ≈ 1 分钟） ===== */
   /* 颜色完全跟随当前色调，只改字体与版式 */
   #editor.script {
@@ -421,6 +440,7 @@
         <button class="btn" id="modeBtn" onclick="toggleScriptMode()" title="剧本模式（Final Draft 格式）">剧本</button>
         <button class="btn" onclick="newDoc()">新建</button>
         <button class="btn" onclick="copyDoc()">复制</button>
+        <button class="btn" onclick="toggleMark()" title="标记/取消标记当前段落（⌘M），⌘⇧M 跳转书签">标记</button>
         <button class="btn" onclick="editToken()">令牌</button>
         <button class="btn" onclick="togglePrefs()" title="阅读舒适度（⌘D）">Aa</button>
       </div>
@@ -546,8 +566,73 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();  // 拦截浏览器默认的“保存网页”
     jumpToLastEdit();
     if (dirty) save();
+  } else if (key === "m") {
+    e.preventDefault();
+    if (e.shiftKey) jumpNextMark();  // ⌘⇧M 在书签间跳转
+    else toggleMark();               // ⌘M 标记/取消当前段落
   }
 });
+
+/* ===== 段落书签 ===== */
+function caretBlock() {
+  const sel = document.getSelection();
+  if (!sel || !sel.anchorNode || !editor.contains(sel.anchorNode)) return null;
+  let n = sel.anchorNode;
+  while (n && n.parentNode !== editor) n = n.parentNode;
+  return n && n.nodeType === Node.ELEMENT_NODE ? n : null;
+}
+
+function applyMarks() {
+  if (!current) return;
+  const marks = new Set(current.marks || []);
+  editor.childNodes.forEach((node) => {
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    const text = node.textContent.trim();
+    node.classList.toggle("marked", text !== "" && marks.has(text));
+  });
+}
+
+function toggleMark() {
+  if (!current) return;
+  const block = caretBlock();
+  const text = block ? block.textContent.trim() : "";
+  if (!text) {
+    setSync("先把光标放到要标记的段落里", "");
+    return;
+  }
+  const marks = new Set(current.marks || []);
+  if (marks.has(text)) {
+    marks.delete(text);
+    setSync("已取消标记", "ok");
+  } else {
+    marks.add(text);
+    setSync("已标记 🔖（⌘⇧M 可跳转回来）", "ok");
+  }
+  current.marks = Array.from(marks);
+  applyMarks();
+  api("/writing/docs/marks", { name: current.name, marks: current.marks })
+    .catch(() => setSync("书签保存失败，稍后自动重试", "err"));
+}
+
+function jumpNextMark() {
+  const marked = Array.from(editor.querySelectorAll(".line.marked"));
+  if (marked.length === 0) {
+    setSync("还没有书签（光标放段落里按 ⌘M 标记）", "");
+    return;
+  }
+  const cur = caretBlock();
+  const curIdx = cur ? marked.indexOf(cur) : -1;
+  const target = marked[(curIdx + 1) % marked.length];
+  editor.focus();
+  const sel = document.getSelection();
+  const range = document.createRange();
+  range.setStart(target, 0);
+  range.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(range);
+  target.scrollIntoView({ behavior: "smooth", block: "center" });
+  setSync(`书签 ${marked.indexOf(target) + 1} / ${marked.length}`, "ok");
+}
 
 /* ===== 记住并跳回上次修改的位置 ===== */
 let lastEditPos = JSON.parse(localStorage.getItem("writing_lastedit") || "{}");
@@ -883,12 +968,13 @@ async function openDoc(name) {
     setSync(`打开失败：${data.error}`, "err");
     return;
   }
-  current = { name, updatedAt: data.updatedAt, readonly: data.readonly };
+  current = { name, updatedAt: data.updatedAt, readonly: data.readonly, marks: data.marks || [] };
   localStorage.setItem("writing_last_doc", name);
   setEditorContent(data.content);
   editor.contentEditable = data.readonly ? "false" : "true";
   applyMode();
   reclassify();
+  applyMarks();
   renderCounts();
   renderSelect();
   setSync(data.readonly ? "只读（Word 文档请在电脑上编辑）" : "已就绪", "ok");
@@ -899,6 +985,7 @@ editor.addEventListener("input", () => {
   trackTyping();
   rememberEditPos();
   reclassify();
+  applyMarks();
   renderCounts();
   setSync("编辑中…", "busy");
   clearTimeout(saveTimer);

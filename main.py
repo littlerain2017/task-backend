@@ -1222,7 +1222,8 @@ async def writing_docs_get(req: DocsGetRequest):
         if doc is None:
             return {"ok": False, "error": "文件不存在"}
         return {"ok": True, "content": content_decode(doc.get("contentB64", "")),
-                "updatedAt": doc.get("updatedAt", 0), "readonly": doc.get("readonly", False)}
+                "updatedAt": doc.get("updatedAt", 0), "readonly": doc.get("readonly", False),
+                "marks": doc.get("marks", [])}
     except RuntimeError as e:
         print(f"[writing] docs/get 失败: {e}")
         return {"ok": False, "error": "服务器内部错误"}
@@ -1267,6 +1268,34 @@ async def writing_docs_put(req: DocsPutRequest):
                 "deltaCjk": daily["deltaCjk"], "activeMs": daily["activeMs"]}
     except RuntimeError as e:
         print(f"[writing] docs/put 失败: {e}")
+        return {"ok": False, "error": "服务器内部错误"}
+
+
+class DocsMarksRequest(BaseModel):
+    token: str
+    name: str
+    marks: list  # 被标记段落的原文列表
+
+
+@app.post("/writing/docs/marks")
+async def writing_docs_marks(req: DocsMarksRequest):
+    """保存段落书签（以段落文字为键，跨设备同步）。"""
+    if not isinstance(req.marks, list) or len(req.marks) > 100:
+        return {"ok": False, "error": "书签最多 100 个"}
+    marks = [m for m in req.marks if isinstance(m, str) and 0 < len(m) <= 500]
+    uid = await writing_uid_from_token(req.token)
+    if not uid:
+        return {"ok": False, "error": "无效令牌"}
+    try:
+        doc_id = f"{uid}:{req.name}"
+        if await writing_query_doc("docs", doc_id) is None:
+            return {"ok": False, "error": "文件不存在"}
+        q = (f'db.collection("docs").where({{_id:{json.dumps(doc_id)}}})'
+             f'.update({{data:{{marks:{json.dumps(marks, ensure_ascii=False)}}}}})')
+        await writing_db("databaseupdate", q)
+        return {"ok": True, "count": len(marks)}
+    except RuntimeError as e:
+        print(f"[writing] docs/marks 失败: {e}")
         return {"ok": False, "error": "服务器内部错误"}
 
 
