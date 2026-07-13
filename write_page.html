@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>写作 · THE ROOM</title>
+<title>Writing Machine</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600&family=Cormorant+Garamond:wght@500;600&family=Courier+Prime:wght@400;700&display=swap" rel="stylesheet">
 <style>
@@ -420,58 +420,102 @@
   #marksPanel .mp-item .bk { font-size: 11px; flex-shrink: 0; }
   #marksPanel .mp-empty { color: var(--muted); text-align: center; padding: 24px 8px; line-height: 1.9; }
 
-  /* ===== 书架面板 ===== */
-  #shelfPanel {
+  /* ===== 书架（全屏入口） ===== */
+  #shelfView {
     position: fixed;
-    top: 64px;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 30;
-    width: 360px;
-    max-width: calc(100vw - 32px);
-    max-height: 70vh;
-    overflow-y: auto;
-    background: var(--header);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    border: 1px solid var(--gold-line);
-    border-radius: 12px;
-    padding: 14px;
+    inset: 0;
+    z-index: 25;
+    background:
+      radial-gradient(ellipse 90% 60% at 50% -10%, rgba(211, 178, 92, 0.07), transparent 65%),
+      var(--bg);
     display: none;
     flex-direction: column;
-    gap: 6px;
+    align-items: center;
+    overflow-y: auto;
+    padding: 9vh 24px 12vh;
   }
-  #shelfPanel.open { display: flex; }
-  .shelf-book {
+  #shelfView.open { display: flex; }
+  .shelf-title {
+    font-family: "Cormorant Garamond", Georgia, serif;
+    font-weight: 600;
+    font-size: clamp(26px, 5vw, 44px);
+    letter-spacing: 0.38em;
+    color: var(--gold);
+    text-indent: 0.38em;
+    text-align: center;
+  }
+  .shelf-sub {
+    margin: 10px 0 7vh;
+    font-size: 13px;
+    letter-spacing: 0.3em;
+    color: var(--muted);
+    text-indent: 0.3em;
+  }
+  .shelf-grid {
     display: flex;
-    align-items: baseline;
-    gap: 10px;
-    padding: 12px 12px;
-    border-radius: 10px;
-    cursor: pointer;
-    border: 1px solid transparent;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 26px;
+    width: 100%;
+    max-width: 900px;
   }
-  .shelf-book:hover { background: rgba(211, 178, 92, 0.08); }
-  .shelf-book.active { border-color: var(--gold-line); }
-  .shelf-book .sb-name {
+  .book-card {
+    width: 250px;
+    min-height: 150px;
+    padding: 26px 24px 20px;
+    border: 1px solid var(--gold-line);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.25s, box-shadow 0.35s;
+    animation: bookFloat 7s ease-in-out infinite;
+  }
+  .book-card:nth-child(2n) { animation-delay: -2.3s; }
+  .book-card:nth-child(3n) { animation-delay: -4.6s; }
+  .book-card:hover {
+    transform: translateY(-10px);
+    border-color: rgba(211, 178, 92, 0.5);
+    box-shadow: 0 30px 70px rgba(0, 0, 0, 0.6);
+    animation-play-state: paused;
+  }
+  @keyframes bookFloat {
+    0%, 100% { translate: 0 0; }
+    50% { translate: 0 -7px; }
+  }
+  .book-card .bc-name {
     font-family: "Cormorant Garamond", "Noto Serif SC", Georgia, serif;
-    font-size: 17px;
+    font-size: 21px;
     font-weight: 600;
     color: var(--ink);
-    letter-spacing: 0.06em;
+    letter-spacing: 0.05em;
+    line-height: 1.4;
   }
-  .shelf-book .sb-meta { margin-left: auto; font-size: 12px; color: var(--muted); white-space: nowrap; }
-  .shelf-new {
-    text-align: center;
-    padding: 12px;
-    border: 1px dashed var(--gold-line);
-    border-radius: 10px;
+  .book-card .bc-meta { margin-top: auto; font-size: 12.5px; color: var(--muted); }
+  .book-card .bc-bar {
+    height: 2px;
+    background: var(--gold-line);
+    border-radius: 1px;
+    overflow: hidden;
+  }
+  .book-card .bc-bar i { display: block; height: 100%; background: var(--gold); }
+  .book-card.new {
+    border-style: dashed;
+    align-items: center;
+    justify-content: center;
     color: var(--gold);
-    font-size: 13.5px;
-    cursor: pointer;
-    margin-top: 4px;
+    font-size: 15px;
+    letter-spacing: 0.1em;
+    background: transparent;
   }
-  .shelf-new:hover { background: rgba(211, 178, 92, 0.08); }
+  @media (max-width: 600px) {
+    .book-card { width: 100%; min-height: 110px; }
+  }
 
   /* ===== 令牌配置浮层 ===== */
   #setup {
@@ -523,7 +567,7 @@
 </head>
 <body>
   <div id="setup">
-    <h1>THE ROOM</h1>
+    <h1>WRITING MACHINE</h1>
     <p>粘贴小程序「连接电脑」页里的配对令牌。<br>这里编辑的是你电脑写作文件夹里的同一批文件，双向同步。</p>
     <input id="tokenInput" placeholder="WRT-XXXXXXXX" autocomplete="off">
     <button class="btn" onclick="saveToken()">开始写作</button>
@@ -531,8 +575,7 @@
 
   <header>
     <div class="header-inner">
-      <div class="wordmark shelf-trigger" onclick="toggleShelf()" style="cursor: pointer;" title="书架">THE ROOM</div>
-      <button class="btn shelf-trigger" onclick="toggleShelf()" title="书架：切换/新建一本书">书架</button>
+      <div class="wordmark shelf-trigger" onclick="openShelf()" style="cursor: pointer;" title="回到书架">WRITING MACHINE</div>
       <div class="doc-box"><select id="docSelect" onchange="openDoc(this.value)"></select></div>
       <div class="actions">
         <button class="btn" id="modeBtn" onclick="toggleScriptMode()" title="剧本模式（Final Draft 格式）">剧本</button>
@@ -569,7 +612,12 @@
   <div class="fade"></div>
 
   <div id="marksPanel"></div>
-  <div id="shelfPanel"></div>
+
+  <div id="shelfView">
+    <div class="shelf-title">WRITING MACHINE</div>
+    <div class="shelf-sub">你的书都悬在这里</div>
+    <div class="shelf-grid" id="shelfGrid"></div>
+  </div>
 
   <div id="prefs">
     <div class="row">
@@ -870,7 +918,6 @@ function jumpToLastEdit() {
 document.addEventListener("click", (e) => {
   if (!$("prefs").contains(e.target) && !e.target.closest(".actions")) $("prefs").classList.remove("open");
   if (!$("marksPanel").contains(e.target) && !e.target.closest(".actions")) $("marksPanel").classList.remove("open");
-  if (!$("shelfPanel").contains(e.target) && !e.target.closest(".shelf-trigger")) $("shelfPanel").classList.remove("open");
 });
 
 Object.keys(TONES).forEach((name) => {
@@ -1137,19 +1184,16 @@ function renderSelect() {
   });
 }
 
-function toggleShelf() {
-  const panel = $("shelfPanel");
-  if (panel.classList.contains("open")) {
-    panel.classList.remove("open");
-    return;
-  }
-  renderShelf();
-  panel.classList.add("open");
+async function openShelf() {
+  if (dirty) await save();
+  renderShelfView();
+  $("shelfView").classList.add("open");
+  try { await loadList(); renderShelfView(); } catch (e) { /* 用缓存渲染 */ }
 }
 
-function renderShelf() {
-  const panel = $("shelfPanel");
-  panel.innerHTML = "";
+function renderShelfView() {
+  const grid = $("shelfGrid");
+  grid.innerHTML = "";
   const books = new Map();  // book → {count, cjk, en}
   docList.forEach((d) => {
     const b = bookOf(d.name);
@@ -1160,34 +1204,47 @@ function renderShelf() {
     books.set(b, s);
   });
   if (!books.has("")) books.set("", { count: 0, cjk: 0, en: 0 });
-  Array.from(books.keys()).sort((a, b) => (a === "") - (b === "") || a.localeCompare(b)).forEach((book) => {
-    const s = books.get(book);
-    const row = document.createElement("div");
-    row.className = "shelf-book" + (book === currentBook ? " active" : "");
-    const name = document.createElement("span");
-    name.className = "sb-name";
-    name.textContent = `📕 ${bookLabel(book)}`;
-    const meta = document.createElement("span");
-    meta.className = "sb-meta";
-    meta.textContent = `${s.count} 篇 · ${(s.cjk + s.en).toLocaleString()} 字`;
-    row.appendChild(name);
-    row.appendChild(meta);
-    row.onclick = () => switchBook(book);
-    panel.appendChild(row);
-  });
+  const maxWords = Math.max(1, ...Array.from(books.values()).map((s) => s.cjk + s.en));
+  Array.from(books.keys())
+    .sort((a, b) => (a === "" ? -1 : b === "" ? 1 : a.localeCompare(b)))
+    .forEach((book) => {
+      const s = books.get(book);
+      const words = s.cjk + s.en;
+      const card = document.createElement("div");
+      card.className = "book-card";
+      const name = document.createElement("div");
+      name.className = "bc-name";
+      name.textContent = bookLabel(book);
+      const bar = document.createElement("div");
+      bar.className = "bc-bar";
+      const fill = document.createElement("i");
+      fill.style.width = `${Math.max(4, Math.round((words / maxWords) * 100))}%`;
+      bar.appendChild(fill);
+      const meta = document.createElement("div");
+      meta.className = "bc-meta";
+      meta.textContent = `${s.count} 篇 · ${words.toLocaleString()} 字`;
+      card.appendChild(name);
+      card.appendChild(meta);
+      card.appendChild(bar);
+      card.onclick = () => switchBook(book);
+      grid.appendChild(card);
+    });
   const add = document.createElement("div");
-  add.className = "shelf-new";
+  add.className = "book-card new";
   add.textContent = "＋ 开一本新书";
   add.onclick = newBook;
-  panel.appendChild(add);
+  grid.appendChild(add);
 }
 
 async function switchBook(book) {
   currentBook = book;
   localStorage.setItem("writing_book", book);
-  $("shelfPanel").classList.remove("open");
+  $("shelfView").classList.remove("open");
   renderSelect();
-  const first = docList.find((d) => bookOf(d.name) === book && !d.readonly) ||
+  const lastDocs = JSON.parse(localStorage.getItem("writing_last_docs") || "{}");
+  const remembered = docList.find((d) => d.name === lastDocs[book]);
+  const first = remembered ||
+                docList.find((d) => bookOf(d.name) === book && !d.readonly) ||
                 docList.find((d) => bookOf(d.name) === book);
   if (first) await openDoc(first.name);
   else setSync(`「${bookLabel(book)}」还没有文稿，点「新建」开始写`, "");
@@ -1211,7 +1268,6 @@ async function newBook() {
     setSync(`新建失败：${data.error}`, "err");
     return;
   }
-  $("shelfPanel").classList.remove("open");
   currentBook = book;
   localStorage.setItem("writing_book", book);
   await loadList();
@@ -1243,6 +1299,10 @@ async function openDoc(name) {
   currentBook = bookOf(name);
   localStorage.setItem("writing_book", currentBook);
   localStorage.setItem("writing_last_doc", name);
+  const lastDocs = JSON.parse(localStorage.getItem("writing_last_docs") || "{}");
+  lastDocs[currentBook] = name;
+  localStorage.setItem("writing_last_docs", JSON.stringify(lastDocs));
+  $("shelfView").classList.remove("open");
   setEditorContent(data.content);
   editor.contentEditable = data.readonly ? "false" : "true";
   applyMode();
@@ -1352,9 +1412,10 @@ async function refresh() {
 async function boot() {
   try {
     await loadList();
-    const last = localStorage.getItem("writing_last_doc");
-    const first = docList.find((d) => d.name === last) || docList.find((d) => !d.readonly) || docList[0];
-    if (first) await openDoc(first.name);
+    // 进门先看书架
+    renderShelfView();
+    $("shelfView").classList.add("open");
+    setSync("从书架上取一本开始", "");
   } catch (e) {
     setSync(`连接失败：${e.message}`, "err");
   }
