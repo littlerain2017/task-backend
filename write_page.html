@@ -425,16 +425,39 @@
     position: fixed;
     inset: 0;
     z-index: 25;
-    background:
-      radial-gradient(ellipse 90% 60% at 50% -10%, rgba(211, 178, 92, 0.07), transparent 65%),
-      var(--bg);
+    background: #000;
     display: none;
+    overflow: hidden;
+  }
+  #shelfView.open { display: block; }
+  /* 底层：银河全景（ESO 360° panorama），压暗调灰做深空底 */
+  #shelfBg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    filter: grayscale(0.85) brightness(0.42);
+    transform: scale(1.06);
+    transition: transform 0.3s ease-out;
+  }
+  /* 中层：Canvas 实时三维星点 */
+  #starCanvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+  /* 顶层：内容 */
+  .shelf-content {
+    position: relative;
+    height: 100%;
+    display: flex;
     flex-direction: column;
     align-items: center;
     overflow-y: auto;
     padding: 9vh 24px 12vh;
   }
-  #shelfView.open { display: flex; }
   .shelf-title {
     font-family: "Cormorant Garamond", Georgia, serif;
     font-weight: 600;
@@ -614,9 +637,13 @@
   <div id="marksPanel"></div>
 
   <div id="shelfView">
-    <div class="shelf-title">WRITING MACHINE</div>
-    <div class="shelf-sub">你的书都悬在这里</div>
-    <div class="shelf-grid" id="shelfGrid"></div>
+    <img id="shelfBg" src="/writing/shelf-bg.jpg" alt="">
+    <canvas id="starCanvas"></canvas>
+    <div class="shelf-content">
+      <div class="shelf-title">WRITING MACHINE</div>
+      <div class="shelf-sub">你的书都悬在这里</div>
+      <div class="shelf-grid" id="shelfGrid"></div>
+    </div>
   </div>
 
   <div id="prefs">
@@ -1184,10 +1211,95 @@ function renderSelect() {
   });
 }
 
+/* ===== 3D 星空（Hail Mary 风格：真实银河底图 + 透视星点 + 鼠标视差） ===== */
+const cosmos = { raf: null, stars: null, ry: 0, rx: 0, tx: 0, ty: 0 };
+
+function initStars() {
+  cosmos.stars = [];
+  for (let i = 0; i < 420; i++) {
+    // 球壳内随机分布
+    const th = Math.random() * Math.PI * 2;
+    const ph = Math.acos(2 * Math.random() - 1);
+    const r = 0.45 + Math.random() * 0.55;
+    cosmos.stars.push({
+      x: r * Math.sin(ph) * Math.cos(th),
+      y: r * Math.cos(ph) * 0.6,
+      z: r * Math.sin(ph) * Math.sin(th),
+      size: Math.random() < 0.06 ? 1.8 + Math.random() * 1.4 : 0.5 + Math.random() * 0.9,
+      gold: Math.random() < 0.12,
+      tw: Math.random() * Math.PI * 2,
+    });
+  }
+}
+
+function drawStars(t) {
+  const canvas = $("starCanvas");
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== w * dpr) { canvas.width = w * dpr; canvas.height = h * dpr; }
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+
+  // 缓慢自转 + 鼠标视差偏转
+  cosmos.ry += 0.00045;
+  const ry = cosmos.ry + cosmos.tx * 0.35;
+  const rx = cosmos.ty * 0.22;
+  const cy = Math.cos(ry), sy = Math.sin(ry);
+  const cx = Math.cos(rx), sx = Math.sin(rx);
+  const f = Math.min(w, h) * 0.9;
+
+  for (const s of cosmos.stars) {
+    // 绕 Y 轴再绕 X 轴
+    let x = s.x * cy + s.z * sy;
+    let z = -s.x * sy + s.z * cy;
+    let y = s.y * cx - z * sx;
+    z = s.y * sx + z * cx;
+    const depth = z + 1.6;
+    if (depth < 0.25) continue;
+    const px = w / 2 + (x / depth) * f;
+    const py = h / 2 + (y / depth) * f;
+    if (px < -10 || px > w + 10 || py < -10 || py > h + 10) continue;
+    const tw = 0.65 + 0.35 * Math.sin(t / 900 + s.tw);
+    const size = (s.size / depth) * 1.5;
+    ctx.globalAlpha = Math.min(1, tw * (1.7 - depth * 0.55));
+    ctx.fillStyle = s.gold ? "#d3b25c" : "#e8eef5";
+    ctx.beginPath();
+    ctx.arc(px, py, size, 0, Math.PI * 2);
+    ctx.fill();
+    if (s.size > 1.7) {  // 亮星：十字衍射芒
+      ctx.globalAlpha *= 0.35;
+      ctx.fillRect(px - size * 4, py - 0.4, size * 8, 0.8);
+      ctx.fillRect(px - 0.4, py - size * 4, 0.8, size * 8);
+    }
+  }
+  ctx.globalAlpha = 1;
+  cosmos.raf = requestAnimationFrame(drawStars);
+}
+
+function startCosmos() {
+  if (!cosmos.stars) initStars();
+  if (!cosmos.raf) cosmos.raf = requestAnimationFrame(drawStars);
+}
+
+function stopCosmos() {
+  if (cosmos.raf) cancelAnimationFrame(cosmos.raf);
+  cosmos.raf = null;
+}
+
+document.addEventListener("mousemove", (e) => {
+  if (!$("shelfView").classList.contains("open")) return;
+  cosmos.tx = (e.clientX / window.innerWidth - 0.5);
+  cosmos.ty = (e.clientY / window.innerHeight - 0.5);
+  $("shelfBg").style.transform =
+    `scale(1.06) translate(${-cosmos.tx * 14}px, ${-cosmos.ty * 10}px)`;
+});
+
 async function openShelf() {
   if (dirty) await save();
   renderShelfView();
   $("shelfView").classList.add("open");
+  startCosmos();
   try { await loadList(); renderShelfView(); } catch (e) { /* 用缓存渲染 */ }
 }
 
@@ -1303,6 +1415,7 @@ async function openDoc(name) {
   lastDocs[currentBook] = name;
   localStorage.setItem("writing_last_docs", JSON.stringify(lastDocs));
   $("shelfView").classList.remove("open");
+  stopCosmos();
   setEditorContent(data.content);
   editor.contentEditable = data.readonly ? "false" : "true";
   applyMode();
@@ -1415,6 +1528,7 @@ async function boot() {
     // 进门先看书架
     renderShelfView();
     $("shelfView").classList.add("open");
+    startCosmos();
     setSync("从书架上取一本开始", "");
   } catch (e) {
     setSync(`连接失败：${e.message}`, "err");

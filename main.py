@@ -1353,6 +1353,14 @@ async def writing_web_page():
         return HTMLResponse(f.read())
 
 
+@app.get("/writing/shelf-bg.jpg")
+async def writing_shelf_bg():
+    from fastapi.responses import FileResponse
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shelf_bg.jpg")
+    return FileResponse(path, media_type="image/jpeg",
+                        headers={"Cache-Control": "public, max-age=604800"})
+
+
 @app.get("/writing/watcher.py")
 async def writing_watcher_script():
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "watcher_client.py")
