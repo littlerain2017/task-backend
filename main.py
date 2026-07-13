@@ -1109,7 +1109,8 @@ async def writing_report(req: WritingReportRequest):
 
 
 # ---------- 内容级同步：网页与电脑编辑同一批文件 ----------
-DOC_NAME_RE = re.compile(r"^[^/\\]{1,120}$")
+# 允许一层子目录作为「书」：书名/章节名.md；禁止路径穿越与隐藏文件
+DOC_NAME_RE = re.compile(r"^(?:[^/\\.][^/\\]{0,60}/)?[^/\\.][^/\\]{0,119}$")
 DOC_MAX_CHARS = 200_000
 EDITORS = ("web", "computer")
 

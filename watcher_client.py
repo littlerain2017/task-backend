@@ -110,6 +110,9 @@ def scan(watch_dirs):
             ext = p.suffix.lower()
             if not p.is_file() or p.name.startswith("~$") or p.name.startswith("."):
                 continue
+            rel = p.relative_to(watch_dir)
+            if any(part.startswith(".") for part in rel.parts):
+                continue  # 跳过隐藏目录（如 .vscode）
             if ext in SYNC_EXTENSIONS:
                 readonly = False
             elif ext in READONLY_EXTENSIONS:
@@ -120,8 +123,10 @@ def scan(watch_dirs):
                 content = read_docx_text(p) if readonly else p.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError, zipfile.BadZipFile, KeyError):
                 continue
-            result[p.name] = {"path": p, "content": content,
-                              "hash": sha(content), "readonly": readonly}
+            # 子文件夹 = 书：云端文件名带「书名/」前缀；根目录文件保持原名
+            name = rel.as_posix()
+            result[name] = {"path": p, "content": content,
+                            "hash": sha(content), "readonly": readonly}
     return result
 
 
@@ -184,13 +189,17 @@ def apply_web_changes(cfg, state, files, prev_hashes):
         if local and state["synced_hashes"].get(name) not in (None, local["hash"]):
             log(f"⚠ {name} 本地与网页都有修改，保留本地版本（网页版本在云端未丢）")
             continue
+        if "" in name.split("/") or ".." in name.split("/") or name.startswith("/"):
+            continue  # 防路径穿越
         path = local["path"] if local else Path(cfg["watch_dirs"][0]) / name
         if path.suffix.lower() not in SYNC_EXTENSIONS:
             continue
+        path.parent.mkdir(parents=True, exist_ok=True)  # 网页新建的书 → 自动建子文件夹
         if path.exists():
             BACKUP_DIR.mkdir(exist_ok=True)
             stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-            (BACKUP_DIR / f"{stamp}_{name}").write_text(
+            safe_name = name.replace("/", "__")
+            (BACKUP_DIR / f"{stamp}_{safe_name}").write_text(
                 path.read_text(encoding="utf-8"), encoding="utf-8")
         path.write_text(content, encoding="utf-8")
         state["synced_hashes"][name] = incoming_hash

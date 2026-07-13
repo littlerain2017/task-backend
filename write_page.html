@@ -420,6 +420,59 @@
   #marksPanel .mp-item .bk { font-size: 11px; flex-shrink: 0; }
   #marksPanel .mp-empty { color: var(--muted); text-align: center; padding: 24px 8px; line-height: 1.9; }
 
+  /* ===== 书架面板 ===== */
+  #shelfPanel {
+    position: fixed;
+    top: 64px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 30;
+    width: 360px;
+    max-width: calc(100vw - 32px);
+    max-height: 70vh;
+    overflow-y: auto;
+    background: var(--header);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--gold-line);
+    border-radius: 12px;
+    padding: 14px;
+    display: none;
+    flex-direction: column;
+    gap: 6px;
+  }
+  #shelfPanel.open { display: flex; }
+  .shelf-book {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 12px 12px;
+    border-radius: 10px;
+    cursor: pointer;
+    border: 1px solid transparent;
+  }
+  .shelf-book:hover { background: rgba(211, 178, 92, 0.08); }
+  .shelf-book.active { border-color: var(--gold-line); }
+  .shelf-book .sb-name {
+    font-family: "Cormorant Garamond", "Noto Serif SC", Georgia, serif;
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--ink);
+    letter-spacing: 0.06em;
+  }
+  .shelf-book .sb-meta { margin-left: auto; font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .shelf-new {
+    text-align: center;
+    padding: 12px;
+    border: 1px dashed var(--gold-line);
+    border-radius: 10px;
+    color: var(--gold);
+    font-size: 13.5px;
+    cursor: pointer;
+    margin-top: 4px;
+  }
+  .shelf-new:hover { background: rgba(211, 178, 92, 0.08); }
+
   /* ===== 令牌配置浮层 ===== */
   #setup {
     position: fixed;
@@ -478,7 +531,8 @@
 
   <header>
     <div class="header-inner">
-      <div class="wordmark">THE ROOM</div>
+      <div class="wordmark shelf-trigger" onclick="toggleShelf()" style="cursor: pointer;" title="书架">THE ROOM</div>
+      <button class="btn shelf-trigger" onclick="toggleShelf()" title="书架：切换/新建一本书">书架</button>
       <div class="doc-box"><select id="docSelect" onchange="openDoc(this.value)"></select></div>
       <div class="actions">
         <button class="btn" id="modeBtn" onclick="toggleScriptMode()" title="剧本模式（Final Draft 格式）">剧本</button>
@@ -515,6 +569,7 @@
   <div class="fade"></div>
 
   <div id="marksPanel"></div>
+  <div id="shelfPanel"></div>
 
   <div id="prefs">
     <div class="row">
@@ -815,6 +870,7 @@ function jumpToLastEdit() {
 document.addEventListener("click", (e) => {
   if (!$("prefs").contains(e.target) && !e.target.closest(".actions")) $("prefs").classList.remove("open");
   if (!$("marksPanel").contains(e.target) && !e.target.closest(".actions")) $("marksPanel").classList.remove("open");
+  if (!$("shelfPanel").contains(e.target) && !e.target.closest(".shelf-trigger")) $("shelfPanel").classList.remove("open");
 });
 
 Object.keys(TONES).forEach((name) => {
@@ -1052,16 +1108,115 @@ async function api(path, payload) {
   return resp.json();
 }
 
+/* ===== 书架：子文件夹 = 一本书，根目录 = 主书架 ===== */
+let currentBook = localStorage.getItem("writing_book") || "";
+
+function bookOf(name) {
+  const i = name.indexOf("/");
+  return i < 0 ? "" : name.slice(0, i);
+}
+
+function fileLabel(name) {
+  const i = name.indexOf("/");
+  return i < 0 ? name : name.slice(i + 1);
+}
+
+function bookLabel(book) {
+  return book === "" ? "主书架 · THE ROOM" : book;
+}
+
 function renderSelect() {
   const sel = $("docSelect");
   sel.innerHTML = "";
-  docList.forEach((d) => {
+  docList.filter((d) => bookOf(d.name) === currentBook).forEach((d) => {
     const opt = document.createElement("option");
     opt.value = d.name;
-    opt.textContent = d.name + (d.readonly ? "（只读）" : "");
+    opt.textContent = fileLabel(d.name) + (d.readonly ? "（只读）" : "");
     if (current && d.name === current.name) opt.selected = true;
     sel.appendChild(opt);
   });
+}
+
+function toggleShelf() {
+  const panel = $("shelfPanel");
+  if (panel.classList.contains("open")) {
+    panel.classList.remove("open");
+    return;
+  }
+  renderShelf();
+  panel.classList.add("open");
+}
+
+function renderShelf() {
+  const panel = $("shelfPanel");
+  panel.innerHTML = "";
+  const books = new Map();  // book → {count, cjk, en}
+  docList.forEach((d) => {
+    const b = bookOf(d.name);
+    const s = books.get(b) || { count: 0, cjk: 0, en: 0 };
+    s.count += 1;
+    s.cjk += d.cjk || 0;
+    s.en += d.en || 0;
+    books.set(b, s);
+  });
+  if (!books.has("")) books.set("", { count: 0, cjk: 0, en: 0 });
+  Array.from(books.keys()).sort((a, b) => (a === "") - (b === "") || a.localeCompare(b)).forEach((book) => {
+    const s = books.get(book);
+    const row = document.createElement("div");
+    row.className = "shelf-book" + (book === currentBook ? " active" : "");
+    const name = document.createElement("span");
+    name.className = "sb-name";
+    name.textContent = `📕 ${bookLabel(book)}`;
+    const meta = document.createElement("span");
+    meta.className = "sb-meta";
+    meta.textContent = `${s.count} 篇 · ${(s.cjk + s.en).toLocaleString()} 字`;
+    row.appendChild(name);
+    row.appendChild(meta);
+    row.onclick = () => switchBook(book);
+    panel.appendChild(row);
+  });
+  const add = document.createElement("div");
+  add.className = "shelf-new";
+  add.textContent = "＋ 开一本新书";
+  add.onclick = newBook;
+  panel.appendChild(add);
+}
+
+async function switchBook(book) {
+  currentBook = book;
+  localStorage.setItem("writing_book", book);
+  $("shelfPanel").classList.remove("open");
+  renderSelect();
+  const first = docList.find((d) => bookOf(d.name) === book && !d.readonly) ||
+                docList.find((d) => bookOf(d.name) === book);
+  if (first) await openDoc(first.name);
+  else setSync(`「${bookLabel(book)}」还没有文稿，点「新建」开始写`, "");
+}
+
+async function newBook() {
+  const book = (window.prompt("新书的名字（会在你的写作文件夹里创建同名子文件夹）", "") || "").trim();
+  if (!book) return;
+  if (/[/\\]/.test(book) || book.startsWith(".")) {
+    setSync("书名不能包含斜杠或以点开头", "err");
+    return;
+  }
+  let file = (window.prompt("第一篇的文件名", "第一章") || "").trim();
+  if (!file) return;
+  if (!/\.(md|txt)$/i.test(file)) file += ".md";
+  const name = `${book}/${file}`;
+  const data = await api("/writing/docs/put", {
+    name, content: "", editor: "web", date: localDate(), baseUpdatedAt: null,
+  });
+  if (!data.ok) {
+    setSync(`新建失败：${data.error}`, "err");
+    return;
+  }
+  $("shelfPanel").classList.remove("open");
+  currentBook = book;
+  localStorage.setItem("writing_book", book);
+  await loadList();
+  await openDoc(name);
+  setSync(`新书「${book}」已开——同名文件夹稍后会出现在你的电脑里`, "ok");
 }
 
 async function loadList() {
@@ -1085,6 +1240,8 @@ async function openDoc(name) {
     return;
   }
   current = { name, updatedAt: data.updatedAt, readonly: data.readonly, marks: data.marks || [] };
+  currentBook = bookOf(name);
+  localStorage.setItem("writing_book", currentBook);
   localStorage.setItem("writing_last_doc", name);
   setEditorContent(data.content);
   editor.contentEditable = data.readonly ? "false" : "true";
@@ -1145,9 +1302,10 @@ async function save() {
 }
 
 async function newDoc() {
-  let name = (window.prompt("新文件名（会同步到你的电脑文件夹）", "新篇章") || "").trim();
-  if (!name) return;
-  if (!/\.(md|txt)$/i.test(name)) name += ".md";
+  let file = (window.prompt(`在「${bookLabel(currentBook)}」里新建（会同步到你的电脑文件夹）`, "新篇章") || "").trim();
+  if (!file) return;
+  if (!/\.(md|txt)$/i.test(file)) file += ".md";
+  const name = currentBook ? `${currentBook}/${file}` : file;
   const data = await api("/writing/docs/put", {
     name, content: "", editor: "web", date: localDate(), baseUpdatedAt: null,
   });
