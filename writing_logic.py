@@ -10,7 +10,7 @@ def count_text(text):
     return len(CJK_RE.findall(text)), len(EN_WORD_RE.findall(text))
 
 
-def build_daily(uid, date_id, counts, existing_daily, now_ms, active_ms_add=0):
+def build_daily(uid, date_id, counts, existing_daily, now_ms, active_ms_add=0, prev_daily=None):
     """根据当前上报与已有当日记录，生成新的 daily 文档。
 
     基线规则：当天第一次上报时记录基线；之后基线不变，
@@ -26,12 +26,18 @@ def build_daily(uid, date_id, counts, existing_daily, now_ms, active_ms_add=0):
         return c["cjk"] + c["en"]
 
     total_units = sum(units(c) for c in counts.values())
-    if existing_daily is None:
-        baseline_units = total_units
-        base_per_file = [{"name": n, "cjk": units(c)} for n, c in counts.items()]
-    else:
+    if existing_daily is not None:
         baseline_units = existing_daily["baselineCjk"]
         base_per_file = existing_daily["basePerFile"]
+    elif prev_daily is not None:
+        # 当天首次上报：基线继承上一个写作日收笔时的总数——
+        # 即使服务器宕机/电脑晚开机，之前写的字也不会被吞进基线
+        baseline_units = prev_daily.get("currentCjk", total_units)
+        base_per_file = [{"name": p["name"], "cjk": p.get("cjk", 0) + p.get("en", 0)}
+                         for p in prev_daily.get("perFile", [])]
+    else:
+        baseline_units = total_units
+        base_per_file = [{"name": n, "cjk": units(c)} for n, c in counts.items()]
 
     base_map = {b["name"]: b["cjk"] for b in base_per_file}
     per_file = [

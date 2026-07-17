@@ -42,6 +42,27 @@ class TestBuildDaily(unittest.TestCase):
         d = build_daily("u1", "2026-07-07", {"a.md": {"cjk": 130, "en": 0}}, first, 2)
         self.assertEqual(d["deltaCjk"], 30)
 
+    def test_first_report_inherits_prev_day_baseline(self):
+        # 昨天收笔 100；今早离线写到 130，首次上报不应吞掉这 30
+        prev = build_daily("u1", "2026-07-16", {"a.md": {"cjk": 100, "en": 0}}, None, 1)
+        d = build_daily("u1", "2026-07-17", {"a.md": {"cjk": 130, "en": 0}}, None, 2, prev_daily=prev)
+        self.assertEqual(d["baselineCjk"], 100)
+        self.assertEqual(d["deltaCjk"], 30)
+        self.assertEqual(d["perFile"][0]["delta"], 30)
+
+    def test_prev_day_baseline_converts_perfile_units(self):
+        prev = build_daily("u1", "2026-07-16", {"a.md": {"cjk": 100, "en": 50}}, None, 1)
+        d = build_daily("u1", "2026-07-17", {"a.md": {"cjk": 110, "en": 55}}, None, 2, prev_daily=prev)
+        self.assertEqual(d["deltaCjk"], 15)
+        self.assertEqual(d["perFile"][0]["delta"], 15)
+
+    def test_existing_daily_wins_over_prev(self):
+        prev = build_daily("u1", "2026-07-16", {"a.md": {"cjk": 100, "en": 0}}, None, 1)
+        existing = build_daily("u1", "2026-07-17", {"a.md": {"cjk": 120, "en": 0}}, None, 2, prev_daily=prev)
+        d = build_daily("u1", "2026-07-17", {"a.md": {"cjk": 125, "en": 0}}, existing, 3, prev_daily=None)
+        self.assertEqual(d["baselineCjk"], 100)
+        self.assertEqual(d["deltaCjk"], 25)
+
     def test_english_words_count_into_delta(self):
         first = build_daily("u1", "2026-07-07", {"a.md": {"cjk": 100, "en": 50}}, None, 1)
         d = build_daily("u1", "2026-07-07", {"a.md": {"cjk": 100, "en": 80}}, first, 2)

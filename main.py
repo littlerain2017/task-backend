@@ -1099,7 +1099,9 @@ async def writing_report(req: WritingReportRequest):
         merged = aggregate_file_docs(all_docs)
 
         daily_id = f"{uid}:{req.date}"
-        daily = build_daily(uid, req.date, merged, await writing_query_doc("daily", daily_id), now_ms)
+        existing = await writing_query_doc("daily", daily_id)
+        prev = None if existing is not None else await writing_prev_daily(uid, req.date)
+        daily = build_daily(uid, req.date, merged, existing, now_ms, prev_daily=prev)
         await writing_upsert("daily", daily_id, daily)
 
         return {"ok": True, "deltaCjk": daily["deltaCjk"]}
@@ -1147,14 +1149,28 @@ async def writing_uid_from_token(token: str) -> str:
 ACTIVE_MS_MAX_PER_REPORT = 30 * 60 * 1000  # 单次上报的写作时长上限，防异常值
 
 
+async def writing_prev_daily(uid: str, date_str: str):
+    """取该用户 date_str 之前最近一个写作日的 daily（当天首报时继承其收笔总数为基线）。"""
+    q = (f'db.collection("daily").where({{uid:{json.dumps(uid)}}})'
+         f'.orderBy("date","desc").limit(5).get()')
+    for r in (await writing_db("databasequery", q)).get("data", []):
+        doc = json.loads(r)
+        if doc.get("date", "") < date_str:  # ISO 日期字符串可直接比较
+            return doc
+    return None
+
+
 async def writing_update_progress(uid: str, date_str: str, now_ms: int, active_ms_add: int = 0) -> dict:
     """按用户聚合全部 files 记录，更新当日进度。"""
     all_q = f'db.collection("files").where({{uid:{json.dumps(uid)}}}).limit(1000).get()'
     all_docs = [json.loads(r) for r in (await writing_db("databasequery", all_q)).get("data", [])]
     merged = aggregate_file_docs(all_docs)
     daily_id = f"{uid}:{date_str}"
-    daily = build_daily(uid, date_str, merged, await writing_query_doc("daily", daily_id), now_ms,
-                        active_ms_add=max(0, min(int(active_ms_add), ACTIVE_MS_MAX_PER_REPORT)))
+    existing = await writing_query_doc("daily", daily_id)
+    prev = None if existing is not None else await writing_prev_daily(uid, date_str)
+    daily = build_daily(uid, date_str, merged, existing, now_ms,
+                        active_ms_add=max(0, min(int(active_ms_add), ACTIVE_MS_MAX_PER_REPORT)),
+                        prev_daily=prev)
     await writing_upsert("daily", daily_id, daily)
     return daily
 
