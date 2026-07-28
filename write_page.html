@@ -527,6 +527,24 @@
     overflow: hidden;
   }
   .book-card .bc-bar i { display: block; height: 100%; background: var(--gold); }
+  .book-card .bc-addchap {
+    margin-top: 12px;
+    align-self: flex-start;
+    font-family: inherit;
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 4px 12px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.25s, color 0.2s, border-color 0.2s;
+  }
+  .book-card:hover .bc-addchap { opacity: 1; }
+  .book-card .bc-addchap:hover { color: var(--gold); border-color: var(--gold-line); }
+  @media (hover: none) { .book-card .bc-addchap { opacity: 1; } }
   .book-card.new {
     border-style: dashed;
     align-items: center;
@@ -1334,9 +1352,15 @@ function renderShelfView() {
       const meta = document.createElement("div");
       meta.className = "bc-meta";
       meta.textContent = `${s.count} 篇 · ${words.toLocaleString()} 字`;
+      const addChap = document.createElement("button");
+      addChap.className = "bc-addchap";
+      addChap.textContent = "＋ 新章节";
+      addChap.title = `在「${bookLabel(book)}」里新建一章`;
+      addChap.onclick = (e) => { e.stopPropagation(); newDoc(book); };
       card.appendChild(name);
       card.appendChild(meta);
       card.appendChild(bar);
+      card.appendChild(addChap);
       card.onclick = () => switchBook(book);
       grid.appendChild(card);
     });
@@ -1473,11 +1497,12 @@ async function save() {
   }
 }
 
-async function newDoc() {
-  let file = (window.prompt(`在「${bookLabel(currentBook)}」里新建（会同步到你的电脑文件夹）`, "新篇章") || "").trim();
+async function newDoc(book) {
+  const target = book === undefined ? currentBook : book;
+  let file = (window.prompt(`在「${bookLabel(target)}」里新建一章（会同步到你的电脑文件夹）`, "新篇章") || "").trim();
   if (!file) return;
   if (!/\.(md|txt)$/i.test(file)) file += ".md";
-  const name = currentBook ? `${currentBook}/${file}` : file;
+  const name = target ? `${target}/${file}` : file;
   const data = await api("/writing/docs/put", {
     name, content: "", editor: "web", date: localDate(), baseUpdatedAt: null,
   });
@@ -1485,6 +1510,8 @@ async function newDoc() {
     setSync(`新建失败：${data.error}`, "err");
     return;
   }
+  currentBook = target;
+  localStorage.setItem("writing_book", target);
   await loadList();
   await openDoc(name);
 }
