@@ -85,6 +85,33 @@ def load_config():
     return cfg
 
 
+def normalize_dirs(cfg):
+    """归一化 watch_dirs 为 [(绝对路径, 书名或None)]。
+
+    条目可为字符串（按子文件夹分书，根目录=主书架），
+    或 {"path":.., "book":..}（整个目录归为指定的一本书）。
+    """
+    out = []
+    for entry in cfg.get("watch_dirs", []):
+        if isinstance(entry, dict):
+            out.append((str(Path(entry["path"]).expanduser().resolve()),
+                        entry.get("book") or None))
+        else:
+            out.append((str(Path(entry).expanduser().resolve()), None))
+    return out
+
+
+def resolve_local_path(dirs, name):
+    """把云端文件名映射回本地路径（用于写回网页新建/修改的文件）。"""
+    for watch_dir, book in dirs:
+        if book and (name == book or name.startswith(book + "/")):
+            return Path(watch_dir) / name[len(book) + 1:]
+    for watch_dir, book in dirs:  # 落到第一个「按子文件夹分书」的目录（主写作目录）
+        if not book:
+            return Path(watch_dir) / name
+    return Path(dirs[0][0]) / name
+
+
 def load_state():
     if STATE_PATH.exists():
         try:
@@ -98,10 +125,10 @@ def save_state(state):
     STATE_PATH.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
 
 
-def scan(watch_dirs):
-    """返回 {name: {"path", "content", "hash", "readonly"}}，目录不可读时抛 RuntimeError。"""
+def scan(dirs):
+    """dirs = [(路径, 书名或None)]。返回 {name: {...}}，目录不可读时抛 RuntimeError。"""
     result = {}
-    for watch_dir in watch_dirs:
+    for watch_dir, book in dirs:
         try:
             list(Path(watch_dir).iterdir())
         except OSError as e:
@@ -123,8 +150,8 @@ def scan(watch_dirs):
                 content = read_docx_text(p) if readonly else p.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError, zipfile.BadZipFile, KeyError):
                 continue
-            # 子文件夹 = 书：云端文件名带「书名/」前缀；根目录文件保持原名
-            name = rel.as_posix()
+            # book 指定 → 整个目录归为该书；否则子文件夹=书、根目录=主书架
+            name = f"{book}/{rel.as_posix()}" if book else rel.as_posix()
             result[name] = {"path": p, "content": content,
                             "hash": sha(content), "readonly": readonly}
     return result
@@ -164,7 +191,7 @@ def push_changed(cfg, state, files, activity):
     save_state(state)
 
 
-def apply_web_changes(cfg, state, files, prev_hashes):
+def apply_web_changes(cfg, dirs, state, files, prev_hashes):
     """拉取网页端修改写回本地。写回的文件同步更新 prev_hashes，
     避免下一轮扫描把写回误判成本地打字（虚增写作时长）。"""
     # 曾经同步到过磁盘、现在本地已删除的文件 → 明确通知云端删除
@@ -191,7 +218,7 @@ def apply_web_changes(cfg, state, files, prev_hashes):
             continue
         if "" in name.split("/") or ".." in name.split("/") or name.startswith("/"):
             continue  # 防路径穿越
-        path = local["path"] if local else Path(cfg["watch_dirs"][0]) / name
+        path = local["path"] if local else resolve_local_path(dirs, name)
         if path.suffix.lower() not in SYNC_EXTENSIONS:
             continue
         path.parent.mkdir(parents=True, exist_ok=True)  # 网页新建的书 → 自动建子文件夹
@@ -216,21 +243,22 @@ def main():
     cfg = load_config()
     state = load_state()
     once = "--once" in sys.argv
-    log(f"开始同步 {'、'.join(cfg['watch_dirs'])}")
+    dirs = normalize_dirs(cfg)
+    log("开始同步 " + "、".join(f"{p}" + (f"→《{b}》" if b else "") for p, b in dirs))
     last_pull = 0.0
     warned = False
     prev_hashes = None
     activity = {"last_ts": 0.0, "pending_ms": 0}
     while True:
         try:
-            files = scan(cfg["watch_dirs"])
+            files = scan(dirs)
             warned = False
             cur_hashes = {n: f["hash"] for n, f in files.items()}
             track_activity(activity, prev_hashes is not None and cur_hashes != prev_hashes)
             prev_hashes = cur_hashes
             push_changed(cfg, state, files, activity)
             if time.time() - last_pull > PULL_EVERY_SECONDS or once:
-                apply_web_changes(cfg, state, files, prev_hashes)
+                apply_web_changes(cfg, dirs, state, files, prev_hashes)
                 last_pull = time.time()
         except RuntimeError as e:
             if not warned:
