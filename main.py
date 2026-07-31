@@ -975,6 +975,7 @@ import time as time_mod
 from fastapi.responses import HTMLResponse, PlainTextResponse
 import base64
 import hashlib
+import secrets
 from typing import Optional
 from writing_logic import aggregate_file_docs, build_daily, count_text, normalize_files
 
@@ -1360,6 +1361,219 @@ async def writing_docs_changes(req: DocsChangesRequest):
     except RuntimeError as e:
         print(f"[writing] docs/changes 失败: {e}")
         return {"ok": False, "error": "服务器内部错误"}
+
+
+SHARE_ID_RE = re.compile(r"^[A-Za-z0-9_\-]{6,40}$")
+COMMENT_MAX = 2000
+
+
+def book_of_name(name: str) -> str:
+    return name.split("/")[0] if "/" in name else ""
+
+
+class ShareCreateRequest(BaseModel):
+    token: str
+    book: str = ""  # 空串 = 主书架（THE ROOM）
+
+
+class ShareGetRequest(BaseModel):
+    share: str
+
+
+class ShareChapterRequest(BaseModel):
+    share: str
+    name: str
+
+
+class CommentAddRequest(BaseModel):
+    share: str
+    name: str
+    para: str = ""
+    author: str = ""
+    text: str
+
+
+class CommentByTokenRequest(BaseModel):
+    token: str
+    name: str
+
+
+class CommentDeleteRequest(BaseModel):
+    token: str
+    id: str
+
+
+async def writing_book_chapters(uid: str, book: str):
+    """返回该用户某本书下所有文件名（升序）。"""
+    metas = await writing_docs_of(uid, with_content=False)
+    names = [m["name"] for m in metas if book_of_name(m.get("name", "")) == book]
+    return sorted(names)
+
+
+@app.post("/writing/share/create")
+async def writing_share_create(req: ShareCreateRequest):
+    """为整本书生成只读分享码（同一本书复用同一个码）。"""
+    uid = await writing_uid_from_token(req.token)
+    if not uid:
+        return {"ok": False, "error": "无效令牌"}
+    try:
+        q = (f'db.collection("shares").where({{uid:{json.dumps(uid)},book:{json.dumps(req.book)}}})'
+             f'.limit(1).get()')
+        rows = (await writing_db("databasequery", q)).get("data", [])
+        if rows:
+            share_id = json.loads(rows[0])["_id"]
+        else:
+            share_id = secrets.token_urlsafe(9)
+            await writing_upsert("shares", share_id, {
+                "uid": uid, "book": req.book, "createdAt": int(time_mod.time() * 1000)})
+        return {"ok": True, "shareId": share_id}
+    except RuntimeError as e:
+        print(f"[writing] share/create 失败: {e}")
+        return {"ok": False, "error": "服务器内部错误"}
+
+
+@app.post("/writing/share/revoke")
+async def writing_share_revoke(req: ShareCreateRequest):
+    """取消整本书的分享（链接立即失效）。"""
+    uid = await writing_uid_from_token(req.token)
+    if not uid:
+        return {"ok": False, "error": "无效令牌"}
+    try:
+        q = (f'db.collection("shares").where({{uid:{json.dumps(uid)},book:{json.dumps(req.book)}}})'
+             f'.remove()')
+        await writing_db("databasedelete", q)
+        return {"ok": True}
+    except RuntimeError as e:
+        print(f"[writing] share/revoke 失败: {e}")
+        return {"ok": False, "error": "服务器内部错误"}
+
+
+@app.post("/writing/share/book")
+async def writing_share_book(req: ShareGetRequest):
+    """公开：凭分享码返回这本书的章节目录（仅书名+章节标题，不含正文）。"""
+    if not SHARE_ID_RE.match(req.share or ""):
+        return {"ok": False, "error": "无效分享码"}
+    try:
+        share = await writing_query_doc("shares", req.share)
+        if share is None:
+            return {"ok": False, "error": "分享不存在或已被取消"}
+        book = share.get("book", "")
+        names = await writing_book_chapters(share["uid"], book)
+        chapters = [{"name": n, "title": n.split("/")[-1].rsplit(".", 1)[0]} for n in names]
+        return {"ok": True, "book": book or "THE ROOM", "chapters": chapters}
+    except RuntimeError as e:
+        print(f"[writing] share/book 失败: {e}")
+        return {"ok": False, "error": "服务器内部错误"}
+
+
+@app.post("/writing/share/chapter")
+async def writing_share_chapter(req: ShareChapterRequest):
+    """公开：凭分享码返回本书内某一章的正文（校验该章确属这本书）。"""
+    if not SHARE_ID_RE.match(req.share or ""):
+        return {"ok": False, "error": "无效分享码"}
+    try:
+        share = await writing_query_doc("shares", req.share)
+        if share is None:
+            return {"ok": False, "error": "分享不存在或已被取消"}
+        if book_of_name(req.name) != share.get("book", ""):
+            return {"ok": False, "error": "无权访问"}
+        doc = await writing_query_doc("docs", f'{share["uid"]}:{req.name}')
+        if doc is None:
+            return {"ok": False, "error": "该文件已被删除"}
+        return {"ok": True,
+                "title": req.name.split("/")[-1].rsplit(".", 1)[0],
+                "content": content_decode(doc.get("contentB64", ""))}
+    except RuntimeError as e:
+        print(f"[writing] share/chapter 失败: {e}")
+        return {"ok": False, "error": "服务器内部错误"}
+
+
+async def _comments_for(uid: str, name: str):
+    q = (f'db.collection("comments").where({{uid:{json.dumps(uid)},name:{json.dumps(name)}}})'
+         f'.orderBy("createdAt","asc").limit(500).get()')
+    rows = (await writing_db("databasequery", q)).get("data", [])
+    return [{"id": d["_id"], "para": d.get("para", ""), "author": d.get("author", ""),
+             "text": d.get("text", ""), "createdAt": d.get("createdAt", 0)}
+            for d in map(json.loads, rows)]
+
+
+@app.post("/writing/comments/list")
+async def writing_comments_list(req: ShareChapterRequest):
+    """公开：某一章的全部留言。"""
+    if not SHARE_ID_RE.match(req.share or ""):
+        return {"ok": False, "error": "无效分享码"}
+    try:
+        share = await writing_query_doc("shares", req.share)
+        if share is None:
+            return {"ok": False, "error": "分享不存在或已被取消"}
+        if book_of_name(req.name) != share.get("book", ""):
+            return {"ok": False, "error": "无权访问"}
+        return {"ok": True, "comments": await _comments_for(share["uid"], req.name)}
+    except RuntimeError as e:
+        print(f"[writing] comments/list 失败: {e}")
+        return {"ok": False, "error": "服务器内部错误"}
+
+
+@app.post("/writing/comments/add")
+async def writing_comments_add(req: CommentAddRequest):
+    """公开：读者对某段落留言。"""
+    if not SHARE_ID_RE.match(req.share or ""):
+        return {"ok": False, "error": "无效分享码"}
+    text = (req.text or "").strip()
+    author = (req.author or "").strip()[:24] or "读者"
+    if not text or len(text) > COMMENT_MAX:
+        return {"ok": False, "error": "留言为空或过长"}
+    try:
+        share = await writing_query_doc("shares", req.share)
+        if share is None:
+            return {"ok": False, "error": "分享不存在或已被取消"}
+        if book_of_name(req.name) != share.get("book", ""):
+            return {"ok": False, "error": "无权评论"}
+        cid = secrets.token_urlsafe(9)
+        await writing_upsert("comments", cid, {
+            "uid": share["uid"], "name": req.name, "para": (req.para or "")[:500],
+            "author": author, "text": text[:COMMENT_MAX], "createdAt": int(time_mod.time() * 1000)})
+        return {"ok": True, "id": cid, "author": author}
+    except RuntimeError as e:
+        print(f"[writing] comments/add 失败: {e}")
+        return {"ok": False, "error": "服务器内部错误"}
+
+
+@app.post("/writing/comments/mine")
+async def writing_comments_mine(req: CommentByTokenRequest):
+    """作者端：凭令牌读取某一章收到的留言。"""
+    uid = await writing_uid_from_token(req.token)
+    if not uid:
+        return {"ok": False, "error": "无效令牌"}
+    try:
+        return {"ok": True, "comments": await _comments_for(uid, req.name)}
+    except RuntimeError as e:
+        print(f"[writing] comments/mine 失败: {e}")
+        return {"ok": False, "error": "服务器内部错误"}
+
+
+@app.post("/writing/comments/delete")
+async def writing_comments_delete(req: CommentDeleteRequest):
+    """作者端：删除自己收到的一条留言。"""
+    uid = await writing_uid_from_token(req.token)
+    if not uid:
+        return {"ok": False, "error": "无效令牌"}
+    try:
+        c = await writing_query_doc("comments", req.id)
+        if c is not None and c.get("uid") == uid:
+            await writing_db("databasedelete",
+                             f'db.collection("comments").where({{_id:{json.dumps(req.id)}}}).remove()')
+        return {"ok": True}
+    except RuntimeError as e:
+        print(f"[writing] comments/delete 失败: {e}")
+        return {"ok": False, "error": "服务器内部错误"}
+
+
+@app.get("/read")
+async def writing_read_page():
+    page = os.path.join(os.path.dirname(os.path.abspath(__file__)), "read_page.html")
+    with open(page, encoding="utf-8") as f:
+        return HTMLResponse(f.read())
 
 
 @app.get("/write")

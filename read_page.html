@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>阅读 · WRITING MACHINE</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600&family=Cormorant+Garamond:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #171512;
+    --header: rgba(23, 21, 18, 0.82);
+    --ink: #e9e2d3;
+    --ink-soft: #cfc6b2;
+    --muted: #8a8172;
+    --gold: #d3b25c;
+    --gold-bright: #e8cd85;
+    --note: #7bb0c9;          /* 读者留言色：冷蓝，与鎏金正文分明 */
+    --note-soft: rgba(123, 176, 201, 0.12);
+    --line: rgba(233, 226, 211, 0.12);
+    --gold-line: rgba(211, 178, 92, 0.18);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Noto Serif SC", "Songti SC", Georgia, serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  ::selection { background: rgba(211, 178, 92, 0.28); }
+  a { color: var(--gold); }
+
+  header {
+    position: sticky; top: 0; z-index: 10; width: 100%;
+    display: flex; justify-content: center;
+    background: var(--header);
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    border-bottom: 1px solid rgba(211, 178, 92, 0.10);
+  }
+  .header-inner {
+    width: 100%; max-width: 760px;
+    display: flex; align-items: center; gap: 14px; padding: 14px 24px;
+  }
+  .wordmark {
+    font-family: "Cormorant Garamond", Georgia, serif;
+    font-weight: 600; font-size: 16px; letter-spacing: 0.28em;
+    color: var(--gold); white-space: nowrap; cursor: pointer;
+  }
+  .crumb { font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .btn {
+    font-family: inherit; font-size: 13px; color: #beb5a2;
+    background: transparent; border: 1px solid var(--line);
+    border-radius: 8px; padding: 6px 12px; cursor: pointer; white-space: nowrap;
+    margin-left: auto; transition: all 0.2s;
+  }
+  .btn:hover { color: var(--gold-bright); border-color: var(--gold-line); }
+
+  main { width: 100%; max-width: 760px; padding: 6vh 24px 16vh; }
+
+  /* 书架（单本书） */
+  .shelf-title {
+    font-family: "Cormorant Garamond", Georgia, serif;
+    font-weight: 600; font-size: clamp(28px, 6vw, 46px);
+    letter-spacing: 0.06em; color: var(--gold); margin-bottom: 6px;
+  }
+  .shelf-hint { font-size: 13px; color: var(--muted); margin-bottom: 6vh; letter-spacing: 0.04em; }
+  .chapter-item {
+    display: flex; align-items: baseline; gap: 14px;
+    padding: 18px 4px; border-bottom: 1px dashed var(--line); cursor: pointer;
+    transition: color 0.2s;
+  }
+  .chapter-item:hover { color: var(--gold-bright); }
+  .chapter-item .ci-idx { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 24px; }
+  .chapter-item .ci-name { font-size: 19px; font-weight: 500; }
+  .chapter-item .ci-cmt { margin-left: auto; font-size: 12px; color: var(--note); }
+
+  /* 阅读 */
+  .read-title {
+    font-size: clamp(22px, 4vw, 30px); font-weight: 600;
+    color: var(--ink); margin-bottom: 5vh; letter-spacing: 0.04em;
+  }
+  .para {
+    position: relative; font-size: 18px; line-height: 2.05; letter-spacing: 0.03em;
+    color: var(--ink); margin: 0 0 1.5em; text-indent: 2em;
+  }
+  .para.h1 { font-size: 1.35em; font-weight: 600; text-indent: 0; margin-bottom: 0.6em; }
+  .para.h2 { font-size: 1.12em; font-weight: 500; color: var(--ink-soft); text-indent: 0; margin-bottom: 1.2em; }
+  .para.rule { text-indent: 0; text-align: center; color: #55503f; letter-spacing: 0.5em; margin: 2em 0; }
+  .para.commentable { cursor: text; }
+  .para .add-note {
+    position: absolute; left: -34px; top: 50%; transform: translateY(-50%);
+    width: 24px; height: 24px; border-radius: 50%;
+    border: 1px solid var(--note); color: var(--note); background: var(--bg);
+    font-size: 13px; line-height: 22px; text-align: center;
+    opacity: 0; cursor: pointer; transition: opacity 0.2s;
+  }
+  .para:hover .add-note { opacity: 0.9; }
+  @media (max-width: 720px) {
+    .para .add-note { position: static; transform: none; opacity: 0.6; display: inline-block;
+      margin-left: 8px; vertical-align: middle; width: 20px; height: 20px; line-height: 18px; font-size: 11px; }
+    .para { text-indent: 0; }
+  }
+
+  /* 留言（读者的话，冷蓝色） */
+  .note {
+    margin: 4px 0 1.8em; padding: 10px 14px;
+    border-left: 3px solid var(--note); background: var(--note-soft);
+    border-radius: 0 8px 8px 0;
+  }
+  .note .nt-head { font-size: 12px; color: var(--note); margin-bottom: 4px; letter-spacing: 0.04em; }
+  .note .nt-text { font-size: 15px; line-height: 1.7; color: #cfe0e9; white-space: pre-wrap; }
+
+  /* 留言输入框 */
+  .note-editor { margin: 4px 0 1.8em; padding: 12px 14px; border: 1px solid var(--note); border-radius: 8px; background: var(--note-soft); }
+  .note-editor textarea {
+    width: 100%; min-height: 64px; background: transparent; border: none; outline: none; resize: vertical;
+    color: var(--ink); font-family: inherit; font-size: 15px; line-height: 1.7;
+  }
+  .note-editor .ne-row { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
+  .note-editor .ne-row .who { font-size: 12px; color: var(--muted); margin-right: auto; }
+  .note-editor button {
+    font-family: inherit; font-size: 13px; border-radius: 8px; padding: 6px 14px; cursor: pointer;
+    background: transparent; border: 1px solid var(--note); color: var(--note);
+  }
+  .note-editor button.primary { background: var(--note); color: #0f1417; border-color: var(--note); }
+
+  .msg { text-align: center; color: var(--muted); padding: 20vh 24px; font-size: 15px; line-height: 2; }
+  .foot { text-align: center; color: var(--muted); font-size: 12px; padding: 3vh 0 6vh; letter-spacing: 0.1em; }
+</style>
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <div class="wordmark" onclick="showShelf()">WRITING MACHINE</div>
+      <span class="crumb" id="crumb"></span>
+      <button class="btn" id="backBtn" onclick="showShelf()" style="display:none">← 目录</button>
+    </div>
+  </header>
+  <main id="main"><div class="msg">载入中…</div></main>
+
+<script>
+const CJK_RE = /[一-鿿]/g;
+const params = new URLSearchParams(location.search);
+const share = params.get("s") || "";
+let bookInfo = null;   // {book, chapters:[{name,title}]}
+let readerName = localStorage.getItem("reader_name_" + share) || "";
+const myComments = new Set(JSON.parse(localStorage.getItem("my_comments_" + share) || "[]"));
+
+const $ = (id) => document.getElementById(id);
+
+async function api(path, payload) {
+  const resp = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ share, ...payload }) });
+  if (!resp.ok) throw new Error(`服务器错误 ${resp.status}`);
+  return resp.json();
+}
+
+function classify(t) {
+  if (/^---+\s*$/.test(t)) return "rule";
+  if (/^#\s/.test(t)) return "h1";
+  if (/^#{2,}\s/.test(t)) return "h2";
+  return "";
+}
+
+async function boot() {
+  if (!share) { $("main").innerHTML = '<div class="msg">链接不完整，请向分享者重新索取。</div>'; return; }
+  try {
+    const data = await api("/writing/share/book", {});
+    if (!data.ok) { $("main").innerHTML = `<div class="msg">${data.error}</div>`; return; }
+    bookInfo = data;
+    showShelf();
+  } catch (e) {
+    $("main").innerHTML = `<div class="msg">载入失败：${e.message}</div>`;
+  }
+}
+
+function showShelf() {
+  $("crumb").textContent = "";
+  $("backBtn").style.display = "none";
+  const chapters = bookInfo.chapters;
+  let html = `<div class="shelf-title">${escapeHtml(bookInfo.book)}</div>
+    <div class="shelf-hint">${chapters.length} 篇 · 点开阅读，读到有感触的段落可以留言</div>`;
+  if (chapters.length === 0) html += '<div class="msg">这本书还没有可读的章节。</div>';
+  chapters.forEach((c, i) => {
+    html += `<div class="chapter-item" onclick="openChapter('${encodeURIComponent(c.name)}')">
+      <span class="ci-idx">${String(i + 1).padStart(2, "0")}</span>
+      <span class="ci-name">${escapeHtml(c.title)}</span></div>`;
+  });
+  html += `<div class="foot">via WRITING MACHINE</div>`;
+  $("main").innerHTML = html;
+  window.scrollTo(0, 0);
+}
+
+async function openChapter(encName) {
+  const name = decodeURIComponent(encName);
+  $("main").innerHTML = '<div class="msg">载入中…</div>';
+  try {
+    const [chap, cmts] = await Promise.all([
+      api("/writing/share/chapter", { name }),
+      api("/writing/comments/list", { name }),
+    ]);
+    if (!chap.ok) { $("main").innerHTML = `<div class="msg">${chap.error}</div>`; return; }
+    renderChapter(name, chap, (cmts.ok ? cmts.comments : []));
+  } catch (e) {
+    $("main").innerHTML = `<div class="msg">载入失败：${e.message}</div>`;
+  }
+}
+
+function renderChapter(name, chap, comments) {
+  $("crumb").textContent = bookInfo.book;
+  $("backBtn").style.display = "";
+  // 按段落文字归组留言
+  const byPara = {};
+  const orphans = [];
+  comments.forEach((c) => {
+    if (c.para) (byPara[c.para] = byPara[c.para] || []).push(c);
+    else orphans.push(c);
+  });
+
+  const wrap = document.createElement("div");
+  const h = document.createElement("div");
+  h.className = "read-title";
+  h.textContent = chap.title;
+  wrap.appendChild(h);
+
+  chap.content.split("\n").forEach((line) => {
+    const text = line.trim();
+    const p = document.createElement("div");
+    p.className = "para " + classify(text);
+    if (text === "") { p.innerHTML = "&nbsp;"; wrap.appendChild(p); return; }
+    p.textContent = text;
+    if (!p.classList.contains("rule")) {
+      p.classList.add("commentable");
+      const btn = document.createElement("span");
+      btn.className = "add-note";
+      btn.textContent = "＋";
+      btn.title = "对这段留言";
+      btn.onclick = (e) => { e.stopPropagation(); openNoteEditor(name, text, p); };
+      p.appendChild(btn);
+    }
+    wrap.appendChild(p);
+    (byPara[text] || []).forEach((c) => wrap.appendChild(renderNote(name, c)));
+  });
+
+  if (orphans.length) {
+    const sep = document.createElement("div");
+    sep.className = "para h2"; sep.textContent = "— 其他留言 —";
+    wrap.appendChild(sep);
+    orphans.forEach((c) => wrap.appendChild(renderNote(name, c)));
+  }
+
+  const foot = document.createElement("div");
+  foot.className = "foot"; foot.textContent = "via WRITING MACHINE";
+  wrap.appendChild(foot);
+
+  $("main").innerHTML = "";
+  $("main").appendChild(wrap);
+  window.scrollTo(0, 0);
+}
+
+function renderNote(name, c) {
+  const div = document.createElement("div");
+  div.className = "note";
+  const d = new Date(c.createdAt);
+  const p = (n) => String(n).padStart(2, "0");
+  const when = `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  const head = document.createElement("div");
+  head.className = "nt-head";
+  head.textContent = `${c.author} · ${when}`;
+  const body = document.createElement("div");
+  body.className = "nt-text";
+  body.textContent = c.text;
+  div.appendChild(head);
+  div.appendChild(body);
+  return div;
+}
+
+function openNoteEditor(name, paraText, afterEl) {
+  if (afterEl.nextSibling && afterEl.nextSibling.classList && afterEl.nextSibling.classList.contains("note-editor")) {
+    afterEl.nextSibling.querySelector("textarea").focus();
+    return;
+  }
+  const box = document.createElement("div");
+  box.className = "note-editor";
+  box.innerHTML = `<textarea placeholder="写下你的想法…"></textarea>
+    <div class="ne-row"><span class="who"></span>
+    <button onclick="this.closest('.note-editor').remove()">取消</button>
+    <button class="primary">留言</button></div>`;
+  afterEl.after(box);
+  const ta = box.querySelector("textarea");
+  const who = box.querySelector(".who");
+  who.textContent = readerName ? `以 ${readerName} 的身份` : "";
+  box.querySelector(".primary").onclick = () => submitNote(name, paraText, box, ta.value);
+  ta.focus();
+}
+
+async function submitNote(name, paraText, box, text) {
+  text = (text || "").trim();
+  if (!text) return;
+  if (!readerName) {
+    readerName = (window.prompt("留言会显示你的名字，怎么称呼你？", "") || "").trim().slice(0, 24) || "读者";
+    localStorage.setItem("reader_name_" + share, readerName);
+  }
+  const btn = box.querySelector(".primary");
+  btn.textContent = "…"; btn.disabled = true;
+  try {
+    const data = await api("/writing/comments/add", { name, para: paraText, author: readerName, text });
+    if (!data.ok) { btn.textContent = "留言"; btn.disabled = false; alert(data.error); return; }
+    myComments.add(data.id);
+    localStorage.setItem("my_comments_" + share, JSON.stringify([...myComments]));
+    const note = renderNote(name, { author: readerName, text, createdAt: Date.now() });
+    box.replaceWith(note);
+  } catch (e) {
+    btn.textContent = "留言"; btn.disabled = false; alert("留言失败：" + e.message);
+  }
+}
+
+function escapeHtml(s) {
+  return (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+boot();
+</script>
+</body>
+</html>

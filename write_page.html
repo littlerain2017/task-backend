@@ -19,6 +19,8 @@
     --red: #c96a5a;
     --line: rgba(233, 226, 211, 0.12);
     --gold-line: rgba(211, 178, 92, 0.18);
+    --note: #7bb0c9;
+    --note-soft: rgba(123, 176, 201, 0.12);
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { height: 100%; }
@@ -226,6 +228,26 @@
     opacity: 0.7;
   }
   #editor.focus-on .line.marked.dim { opacity: 0.55; }  /* 专注模式下书签段落也别太暗 */
+
+  /* 朋友的留言：编辑器内联、冷蓝色 */
+  #editor .inline-note {
+    position: relative;
+    margin: 6px 0 1.2em;
+    padding: 8px 30px 8px 12px;
+    border-left: 3px solid var(--note);
+    background: var(--note-soft);
+    border-radius: 0 8px 8px 0;
+    text-indent: 0;
+    font-size: 0.82em;
+    line-height: 1.65;
+  }
+  #editor .inline-note .in-head { color: var(--note); font-size: 0.85em; letter-spacing: 0.04em; }
+  #editor .inline-note .in-text { color: #cfe0e9; white-space: pre-wrap; margin-top: 3px; }
+  #editor .inline-note .in-del {
+    position: absolute; right: 10px; top: 8px; color: var(--muted);
+    cursor: pointer; font-size: 14px; line-height: 1;
+  }
+  #editor .inline-note .in-del:hover { color: var(--note); }
 
   /* ===== 剧本模式（Final Draft 规范：Courier 12pt、55 行/页 ≈ 1 分钟） ===== */
   /* 颜色完全跟随当前色调，只改字体与版式 */
@@ -624,6 +646,7 @@
         <button class="btn" onclick="copyDoc()">复制</button>
         <button class="btn" onclick="toggleMark()" title="标记/取消标记当前段落（⌘M），⌘⇧M 跳转书签">标记</button>
         <button class="btn" onclick="toggleMarksPanel()" title="查看全部书签">书签</button>
+        <button class="btn" onclick="shareBook()" title="把这本书只读分享给朋友，可留言">分享</button>
         <button class="btn" onclick="editToken()">令牌</button>
         <button class="btn" onclick="togglePrefs()" title="阅读舒适度（⌘D）">Aa</button>
       </div>
@@ -779,7 +802,7 @@ function applyMarks() {
   if (!current) return;
   const marks = new Set(current.marks || []);
   editor.childNodes.forEach((node) => {
-    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    if (node.nodeType !== Node.ELEMENT_NODE || isNote(node)) return;
     const text = node.textContent.trim();
     node.classList.toggle("marked", text !== "" && marks.has(text));
   });
@@ -1079,9 +1102,14 @@ function setEditorContent(text) {
   editor.appendChild(frag);
 }
 
+function isNote(node) {
+  return node.nodeType === Node.ELEMENT_NODE && node.classList.contains("inline-note");
+}
+
 function getEditorContent() {
   const lines = [];
   editor.childNodes.forEach((node) => {
+    if (isNote(node)) return;  // 朋友的留言不算正文
     if (node.nodeType === Node.TEXT_NODE) lines.push(node.textContent);
     else lines.push(node.textContent.replace(/\n/g, ""));
   });
@@ -1089,7 +1117,8 @@ function getEditorContent() {
 }
 
 function reclassify() {
-  const nodes = Array.prototype.filter.call(editor.childNodes, (n) => n.nodeType === Node.ELEMENT_NODE);
+  const nodes = Array.prototype.filter.call(editor.childNodes,
+    (n) => n.nodeType === Node.ELEMENT_NODE && !isNote(n));
   const script = isScriptMode();
   let types = null;
   let lines = null;
@@ -1447,6 +1476,59 @@ async function openDoc(name) {
   renderCounts();
   renderSelect();
   setSync(data.readonly ? "只读（Word 文档请在电脑上编辑）" : "已就绪", "ok");
+  loadComments(name);
+}
+
+/* ===== 朋友的留言（编辑器内联展示，冷蓝色，作者可删） ===== */
+async function loadComments(name) {
+  document.querySelectorAll(".inline-note").forEach((n) => n.remove());
+  try {
+    const data = await api("/writing/comments/mine", { name });
+    if (!data.ok || !data.comments.length) return;
+    const byPara = {};
+    data.comments.forEach((c) => { if (c.para) (byPara[c.para] = byPara[c.para] || []).push(c); });
+    editor.childNodes.forEach((node) => {
+      if (node.nodeType !== Node.ELEMENT_NODE) return;
+      const list = byPara[node.textContent.trim()];
+      if (!list) return;
+      list.forEach((c) => node.after(buildInlineNote(c)));
+    });
+  } catch (e) { /* 留言加载失败不影响写作 */ }
+}
+
+function buildInlineNote(c) {
+  const div = document.createElement("div");
+  div.className = "inline-note";
+  div.contentEditable = "false";
+  const d = new Date(c.createdAt);
+  const p = (n) => String(n).padStart(2, "0");
+  div.innerHTML = `<span class="in-head">${escapeHtml(c.author)} · ${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}</span>
+    <span class="in-del" title="删除这条留言">×</span>
+    <div class="in-text"></div>`;
+  div.querySelector(".in-text").textContent = c.text;
+  div.querySelector(".in-del").onclick = async () => {
+    div.remove();
+    try { await api("/writing/comments/delete", { id: c.id }); } catch (e) {}
+  };
+  return div;
+}
+
+function escapeHtml(s) {
+  return (s || "").replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+}
+
+async function shareBook() {
+  if (!current) { setSync("先打开一本书", ""); return; }
+  const label = bookLabel(currentBook);
+  try {
+    const data = await api("/writing/share/create", { book: currentBook });
+    if (!data.ok) { setSync(`分享失败：${data.error}`, "err"); return; }
+    const url = `${location.origin}/read?s=${data.shareId}`;
+    try { await navigator.clipboard.writeText(url); } catch (e) {}
+    window.prompt(`「${label}」的只读分享链接已复制。\n朋友打开可读整本书、能对段落留言（不能编辑，也看不到你其他的书）。\n她的留言会以冷蓝色显示在你的编辑器里。`, url);
+  } catch (e) {
+    setSync(`分享失败：${e.message}`, "err");
+  }
 }
 
 editor.addEventListener("input", () => {
