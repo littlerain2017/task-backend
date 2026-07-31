@@ -29,6 +29,7 @@
     display: flex;
     flex-direction: column;
     align-items: center;
+    transition: background 0.4s;
   }
   ::selection { background: rgba(211, 178, 92, 0.28); }
   a { color: var(--gold); }
@@ -50,11 +51,18 @@
     color: var(--gold); white-space: nowrap; cursor: pointer;
   }
   .crumb { font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tones { display: flex; gap: 7px; margin-left: auto; }
+  .tone-dot {
+    width: 20px; height: 20px; border-radius: 50%;
+    border: 1px solid var(--line); cursor: pointer; transition: transform 0.15s, box-shadow 0.2s;
+  }
+  .tone-dot:hover { transform: scale(1.12); }
+  .tone-dot.active { border-color: var(--gold); box-shadow: 0 0 0 2px var(--gold-line); }
   .btn {
     font-family: inherit; font-size: 13px; color: #beb5a2;
     background: transparent; border: 1px solid var(--line);
     border-radius: 8px; padding: 6px 12px; cursor: pointer; white-space: nowrap;
-    margin-left: auto; transition: all 0.2s;
+    transition: all 0.2s;
   }
   .btn:hover { color: var(--gold-bright); border-color: var(--gold-line); }
 
@@ -136,12 +144,21 @@
     <div class="header-inner">
       <div class="wordmark" onclick="showShelf()">WRITING MACHINE</div>
       <span class="crumb" id="crumb"></span>
+      <div class="tones" id="tones"></div>
       <button class="btn" id="backBtn" onclick="showShelf()" style="display:none">← 目录</button>
     </div>
   </header>
   <main id="main"><div class="msg">载入中…</div></main>
 
 <script>
+const TONES = {
+  "暖黑":   { bg: "#171512", header: "rgba(23,21,18,0.82)",  ink: "#e9e2d3" },
+  "墨绿":   { bg: "#141a16", header: "rgba(20,26,22,0.82)",  ink: "#e4e6d9" },
+  "纯黑":   { bg: "#0d0c0b", header: "rgba(13,12,11,0.82)",  ink: "#e6e1d6" },
+  "藏蓝":   { bg: "#13161d", header: "rgba(19,22,29,0.82)",  ink: "#e2e4e6" },
+  "咖啡褐": { bg: "#1b1512", header: "rgba(27,21,18,0.82)",  ink: "#ecdfd0" },
+};
+
 const CJK_RE = /[一-鿿]/g;
 const params = new URLSearchParams(location.search);
 const share = params.get("s") || "";
@@ -322,6 +339,35 @@ function escapeHtml(s) {
   return (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
 
+/* ===== 读者自选配色 ===== */
+function applyTone(name) {
+  const t = TONES[name] || TONES["暖黑"];
+  const r = document.documentElement.style;
+  r.setProperty("--bg", t.bg);
+  r.setProperty("--header", t.header);
+  r.setProperty("--ink", t.ink);
+  localStorage.setItem("reader_tone", name);
+  document.querySelectorAll(".tone-dot").forEach((el) =>
+    el.classList.toggle("active", el.dataset.tone === name));
+}
+
+function renderTones() {
+  const box = $("tones");
+  box.innerHTML = "";
+  const cur = localStorage.getItem("reader_tone") || "暖黑";
+  Object.keys(TONES).forEach((name) => {
+    const dot = document.createElement("div");
+    dot.className = "tone-dot" + (name === cur ? " active" : "");
+    dot.dataset.tone = name;
+    dot.title = name;
+    dot.style.background = TONES[name].bg;
+    dot.onclick = () => applyTone(name);
+    box.appendChild(dot);
+  });
+  applyTone(cur);
+}
+
+renderTones();
 boot();
 </script>
 </body>
