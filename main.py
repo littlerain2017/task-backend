@@ -1488,12 +1488,21 @@ async def writing_share_chapter(req: ShareChapterRequest):
         return {"ok": False, "error": "服务器内部错误"}
 
 
+def _comment_field(d, key):
+    """留言字段 base64 存储；兼容极早期的明文旧数据。"""
+    b = d.get(key + "B64")
+    if b is not None:
+        return content_decode(b)
+    return d.get(key, "")
+
+
 async def _comments_for(uid: str, name: str):
     q = (f'db.collection("comments").where({{uid:{json.dumps(uid)},name:{json.dumps(name)}}})'
          f'.orderBy("createdAt","asc").limit(500).get()')
     rows = (await writing_db("databasequery", q)).get("data", [])
-    return [{"id": d["_id"], "para": d.get("para", ""), "author": d.get("author", ""),
-             "text": d.get("text", ""), "createdAt": d.get("createdAt", 0)}
+    return [{"id": d["_id"], "para": _comment_field(d, "para"),
+             "author": _comment_field(d, "author"), "text": _comment_field(d, "text"),
+             "createdAt": d.get("createdAt", 0)}
             for d in map(json.loads, rows)]
 
 
@@ -1531,8 +1540,11 @@ async def writing_comments_add(req: CommentAddRequest):
             return {"ok": False, "error": "无权评论"}
         cid = secrets.token_urlsafe(9)
         await writing_upsert("comments", cid, {
-            "uid": share["uid"], "name": req.name, "para": (req.para or "")[:500],
-            "author": author, "text": text[:COMMENT_MAX], "createdAt": int(time_mod.time() * 1000)})
+            "uid": share["uid"], "name": req.name,
+            "paraB64": content_encode((req.para or "")[:500]),
+            "authorB64": content_encode(author),
+            "textB64": content_encode(text[:COMMENT_MAX]),
+            "createdAt": int(time_mod.time() * 1000)})
         return {"ok": True, "id": cid, "author": author}
     except RuntimeError as e:
         print(f"[writing] comments/add 失败: {e}")
