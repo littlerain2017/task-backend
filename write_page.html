@@ -1054,22 +1054,19 @@ function classifyScriptLines(lines) {
 
 const SCRIPT_CLASS = { blank: "blank", scene: "sc-scene", trans: "sc-trans",
                        paren: "sc-paren", dial: "sc-dial", char: "sc-char", action: "sc-action" };
-// 各元素每行可容纳的列数（中文按 2 列计），用于估算换行后的实际行数
-const SCRIPT_CPL = { scene: 58, action: 58, dial: 36, paren: 28, char: 40, trans: 58, blank: 58 };
+const SCRIPT_LINE_PX = 24;                              // 必须与 CSS --sc-lh 一致
+const SCRIPT_PAGE_PX = SCRIPT_LINE_PX * LINES_PER_PAGE; // 一页 = 55 行的实际像素高度
 
-function colWidth(text) {
-  let w = 0;
-  for (const ch of text) w += /[ᄀ-￦]/.test(ch) ? 2 : 1;
-  return w;
-}
-
-function updatePageInfo(lines, types) {
-  let total = 0;
-  for (let i = 0; i < lines.length; i++) {
-    const t = lines[i].trim();
-    total += t === "" ? 1 : Math.max(1, Math.ceil(colWidth(t) / SCRIPT_CPL[types[i]]));
-  }
-  const pages = Math.max(1, Math.ceil(total / LINES_PER_PAGE));
+// 直接量实际排版高度来数页，与稿纸上画的分页线用同一套几何，保证「约X页」= 眼睛看到的页数
+function updatePageInfo() {
+  const gridTop = SCRIPT_LINE_PX * 2;  // 分页线起点（对应顶部留白）
+  let bottom = gridTop;
+  editor.childNodes.forEach((node) => {
+    if (node.nodeType !== Node.ELEMENT_NODE || isNote(node)) return;
+    const b = node.offsetTop + node.offsetHeight;
+    if (b > bottom) bottom = b;
+  });
+  const pages = Math.max(1, Math.ceil((bottom - gridTop) / SCRIPT_PAGE_PX));
   $("pageCount").textContent = pages;
   $("minCount").textContent = pages;
 }
@@ -1132,7 +1129,7 @@ function reclassify() {
     const keepDim = node.classList.contains("dim") ? " dim" : "";
     if (node.className !== cls + keepDim) node.className = cls + keepDim;
   });
-  if (script) updatePageInfo(lines, types);
+  if (script) updatePageInfo();
 }
 
 editor.addEventListener("paste", (e) => {
