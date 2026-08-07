@@ -249,6 +249,34 @@
   }
   #editor .inline-note .in-del:hover { color: var(--note); }
 
+  /* 彩色高亮：选中文字上色，用于区分修改/待办等 */
+  #editor .hl { border-radius: 2px; padding: 0 1px; }
+  #editor .hl-red    { color: #e6897a; }
+  #editor .hl-amber  { color: #e0a860; }
+  #editor .hl-green  { color: #8fc99a; }
+  #editor .hl-cyan   { color: #79c3c3; }
+  #editor .hl-violet { color: #b6a0da; }
+
+  #hlPalette {
+    position: fixed; z-index: 40; display: none;
+    align-items: center; gap: 8px; padding: 7px 10px;
+    background: rgba(0,0,0,0.6); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--gold-line); border-radius: 999px;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.5);
+    transform: translate(-50%, -100%);
+  }
+  #hlPalette.open { display: flex; }
+  #hlPalette .sw {
+    width: 20px; height: 20px; border-radius: 50%; cursor: pointer;
+    border: 1px solid rgba(255,255,255,0.25); transition: transform 0.12s;
+  }
+  #hlPalette .sw:hover { transform: scale(1.18); }
+  #hlPalette .clr {
+    font-family: inherit; font-size: 12px; color: var(--muted); cursor: pointer;
+    background: transparent; border: none; padding: 0 2px 0 4px; border-left: 1px solid var(--line);
+  }
+  #hlPalette .clr:hover { color: var(--ink); }
+
   /* ===== 剧本模式（Final Draft 规范：Courier 12pt、55 行/页 ≈ 1 分钟） ===== */
   /* 颜色完全跟随当前色调，只改字体与版式 */
   #editor.script {
@@ -676,6 +704,14 @@
   <div class="fade"></div>
 
   <div id="marksPanel"></div>
+  <div id="hlPalette">
+    <span class="sw" data-c="red"    style="background:#e6897a" title="红"></span>
+    <span class="sw" data-c="amber"  style="background:#e0a860" title="橙"></span>
+    <span class="sw" data-c="green"  style="background:#8fc99a" title="绿"></span>
+    <span class="sw" data-c="cyan"   style="background:#79c3c3" title="青"></span>
+    <span class="sw" data-c="violet" style="background:#b6a0da" title="紫"></span>
+    <button class="clr" data-c="clear">清除</button>
+  </div>
 
   <div id="shelfView">
     <img id="shelfBg" src="/writing/shelf-bg.jpg" alt="">
@@ -1456,7 +1492,8 @@ async function openDoc(name) {
     setSync(`打开失败：${data.error}`, "err");
     return;
   }
-  current = { name, updatedAt: data.updatedAt, readonly: data.readonly, marks: data.marks || [] };
+  current = { name, updatedAt: data.updatedAt, readonly: data.readonly,
+              marks: data.marks || [], highlights: data.highlights || [] };
   currentBook = bookOf(name);
   localStorage.setItem("writing_book", currentBook);
   localStorage.setItem("writing_last_doc", name);
@@ -1470,6 +1507,8 @@ async function openDoc(name) {
   applyMode();
   reclassify();
   applyMarks();
+  renderHighlights();
+  if (pruneHighlights()) { renderHighlights(); persistHighlights(); }  // 清理已被改动的段落上的失效高亮
   renderCounts();
   renderSelect();
   setSync(data.readonly ? "只读（Word 文档请在电脑上编辑）" : "已就绪", "ok");
@@ -1513,6 +1552,111 @@ function buildInlineNote(c) {
 function escapeHtml(s) {
   return (s || "").replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
 }
+
+/* ===== 彩色高亮：选中文字上色（存储与正文分离，不污染 .md） ===== */
+const HL_COLORS = ["red", "amber", "green", "cyan", "violet"];
+
+// 把存储的高亮渲染进段落（重建 innerHTML，只对非当前光标所在段安全调用）
+function renderHighlights() {
+  if (!current) return;
+  const byPara = {};
+  (current.highlights || []).forEach((h) => (byPara[h.para] = byPara[h.para] || []).push(h));
+  editor.childNodes.forEach((node) => {
+    if (node.nodeType !== Node.ELEMENT_NODE || isNote(node)) return;
+    const text = node.textContent;
+    const hls = (byPara[text] || [])
+      .filter((h) => HL_COLORS.includes(h.color) && h.len > 0 && h.start >= 0 && h.start + h.len <= text.length)
+      .sort((a, b) => a.start - b.start);
+    if (hls.length === 0) {
+      if (node.querySelector && node.querySelector(".hl")) node.textContent = text; // 清掉残留 span
+      return;
+    }
+    let html = "", pos = 0;
+    hls.forEach((h) => {
+      if (h.start < pos) return;  // 跳过重叠
+      html += escapeHtml(text.slice(pos, h.start));
+      html += `<span class="hl hl-${h.color}">${escapeHtml(text.slice(h.start, h.start + h.len))}</span>`;
+      pos = h.start + h.len;
+    });
+    html += escapeHtml(text.slice(pos));
+    node.innerHTML = html;
+  });
+}
+
+// 从当前选区解析出 {block, para, start, len}；跨段或无选区返回 null
+function selectionSpan() {
+  const sel = document.getSelection();
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
+  const range = sel.getRangeAt(0);
+  const blockOf = (n) => { while (n && n.parentNode !== editor) n = n.parentNode; return n; };
+  const block = blockOf(range.startContainer);
+  const block2 = blockOf(range.endContainer);
+  if (!block || block !== block2 || isNote(block)) return null;
+  const pre = document.createRange();
+  pre.selectNodeContents(block);
+  pre.setEnd(range.startContainer, range.startOffset);
+  const start = pre.toString().length;
+  const len = range.toString().length;
+  if (len <= 0) return null;
+  return { block, para: block.textContent, start, len };
+}
+
+function showPalette() {
+  const span = selectionSpan();
+  const pal = $("hlPalette");
+  if (!span || editor.contentEditable === "false") { pal.classList.remove("open"); return; }
+  const rect = document.getSelection().getRangeAt(0).getBoundingClientRect();
+  pal.style.left = (rect.left + rect.width / 2) + "px";
+  pal.style.top = (rect.top - 8) + "px";
+  pal.classList.add("open");
+}
+
+function persistHighlights() {
+  api("/writing/docs/highlights", { name: current.name, highlights: current.highlights })
+    .catch(() => setSync("高亮保存失败，稍后自动重试", "err"));
+}
+
+function applyHighlight(color) {
+  const span = selectionSpan();
+  $("hlPalette").classList.remove("open");
+  if (!span || !current) return;
+  current.highlights = current.highlights || [];
+  if (color === "clear") {
+    // 移除与选区重叠的、同段高亮
+    const a = span.start, b = span.start + span.len;
+    current.highlights = current.highlights.filter((h) =>
+      !(h.para === span.para && h.start < b && h.start + h.len > a));
+  } else {
+    // 先去掉同段完全被覆盖的旧高亮，再加新的
+    const a = span.start, b = span.start + span.len;
+    current.highlights = current.highlights.filter((h) =>
+      !(h.para === span.para && h.start >= a && h.start + h.len <= b));
+    current.highlights.push({ para: span.para, start: span.start, len: span.len, color });
+  }
+  document.getSelection().removeAllRanges();
+  renderHighlights();
+  persistHighlights();
+  setSync(color === "clear" ? "已清除高亮" : "已高亮", "ok");
+}
+
+// 编辑后清理锚定失效（段落被改动）的高亮
+function pruneHighlights() {
+  if (!current || !current.highlights || current.highlights.length === 0) return false;
+  const paras = new Set();
+  editor.childNodes.forEach((n) => { if (n.nodeType === Node.ELEMENT_NODE && !isNote(n)) paras.add(n.textContent); });
+  const before = current.highlights.length;
+  current.highlights = current.highlights.filter((h) => paras.has(h.para));
+  return current.highlights.length !== before;
+}
+
+$("hlPalette").addEventListener("mousedown", (e) => {
+  const el = e.target.closest("[data-c]");
+  if (el) { e.preventDefault(); applyHighlight(el.dataset.c); }
+});
+document.addEventListener("selectionchange", () => {
+  if (document.activeElement === editor) setTimeout(showPalette, 0);
+  else $("hlPalette").classList.remove("open");
+});
 
 async function shareBook() {
   if (!current) { setSync("先打开一本书", ""); return; }

@@ -1239,9 +1239,11 @@ async def writing_docs_get(req: DocsGetRequest):
         doc = await writing_query_doc("docs", f"{uid}:{req.name}")
         if doc is None:
             return {"ok": False, "error": "文件不存在"}
+        hb = doc.get("highlightsB64")
+        highlights = json.loads(content_decode(hb)) if hb else []
         return {"ok": True, "content": content_decode(doc.get("contentB64", "")),
                 "updatedAt": doc.get("updatedAt", 0), "readonly": doc.get("readonly", False),
-                "marks": doc.get("marks", [])}
+                "marks": doc.get("marks", []), "highlights": highlights}
     except RuntimeError as e:
         print(f"[writing] docs/get 失败: {e}")
         return {"ok": False, "error": "服务器内部错误"}
@@ -1293,6 +1295,34 @@ class DocsMarksRequest(BaseModel):
     token: str
     name: str
     marks: list  # 被标记段落的原文列表
+
+
+class DocsHighlightsRequest(BaseModel):
+    token: str
+    name: str
+    highlights: list  # [{para, start, len, color}]，整体 base64 存储
+
+
+@app.post("/writing/docs/highlights")
+async def writing_docs_highlights(req: DocsHighlightsRequest):
+    """保存彩色高亮标注（不写进正文文件，单独存、跨设备同步）。"""
+    if not isinstance(req.highlights, list) or len(req.highlights) > 1000:
+        return {"ok": False, "error": "高亮过多"}
+    uid = await writing_uid_from_token(req.token)
+    if not uid:
+        return {"ok": False, "error": "无效令牌"}
+    try:
+        doc_id = f"{uid}:{req.name}"
+        if await writing_query_doc("docs", doc_id) is None:
+            return {"ok": False, "error": "文件不存在"}
+        blob = content_encode(json.dumps(req.highlights, ensure_ascii=False))
+        q = (f'db.collection("docs").where({{_id:{json.dumps(doc_id)}}})'
+             f'.update({{data:{{highlightsB64:{json.dumps(blob)}}}}})')
+        await writing_db("databaseupdate", q)
+        return {"ok": True, "count": len(req.highlights)}
+    except RuntimeError as e:
+        print(f"[writing] docs/highlights 失败: {e}")
+        return {"ok": False, "error": "服务器内部错误"}
 
 
 @app.post("/writing/docs/marks")
