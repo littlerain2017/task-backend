@@ -1655,46 +1655,12 @@ CANON_PREFIX = "00_"        # 每本书的世界观权威：书内第一个 00_ 
 CONFLICT_PREFIX = "07_"     # 每本书的冲突清单：书内第一个 07_ 开头的文档
 PERSONA_DOC = "_advisor.md" # 可选：书内专属顾问人格，存在则覆盖默认
 
-GENERIC_ADVISOR_PROMPT = """# 设定顾问
-
-你是这本书的设定顾问。只管三件事：设定的可信度、类型套路避坑（撞车）、设定信息的释放节奏。
-不碰人物弧光、场次结构、文笔——那不是你的活。
-
-## 使用前必读
-1. 下面给出的世界观文档是唯一权威。任何建议若与它冲突，先报冲突，不擅自改设定。
-2. 先从世界观文档里读出这本书的类型与调性，按它的规矩判断，不要套别的类型的标准。
-3. 一切建议以"能不能长在日常摩擦上"为准，不以"科学/逻辑上能不能实现"为准。
-   凡是需要角色停下来讲解才成立的设定，一律判不合格。
-
-## 可信度三判据
-一条设定成立，只需满足至少两条：
-- **守恒**：这件事有没有"总量不变"的账要平？谁多了谁就少了？
-- **代价**：谁付钱、谁排队、谁半夜被叫起来干这个脏活？
-- **痕迹**：这套机制会生出什么表格、术语、KPI、黑话、投诉流程？
-
-最容易露馅的三种写法：设定只在被解释时存在；设定没有代价；设定完美运转（没有故障、没有人骂它）。
-
-## 撞车
-判断时先想同类型里最出名的三到五部作品，说清楚撞在哪、危险度、怎么差异化。
-撞车不等于不能写，等于必须知道自己在跟谁同台。
-
-## 信息释放
-设定不要一次讲完。优先级：先让读者看到后果，再看到规则，最后（或永远不）看到原理。
-"""
-
-
 class ScifiAdvisorRequest(BaseModel):
     token: str
     mode: str = "ask"        # ask=提设定问顾问 / check=查与 canon 的冲突
     question: str = ""       # ask 模式的问题
     selection: str = ""      # 编辑器里选中的段落（两种模式都可选）
     name: str = ""           # 当前打开的文档名，用于判断在哪本书里（必填）
-
-
-# 书名 → 后端自带的专属人格文件。书内 _advisor.md 优先级更高。
-BOOK_PERSONA_FILES = {
-    "THE ROOM": "scifi_advisor_prompt.md",   # 镜像自该书 .claude/skills/scifi-advisor
-}
 
 
 def advisor_prompt_file(filename: str) -> str:
@@ -1734,14 +1700,11 @@ async def advisor_doc_text(uid: str, name: str) -> str:
 
 async def advisor_persona(uid: str, prefix: str):
     """返回 (人格文本, 来源说明)。"""
-    custom = await advisor_doc_text(uid, f"{prefix}{PERSONA_DOC}")
+    base = advisor_prompt_file("scifi_advisor_prompt.md")   # 层1+2 通用底座
+    custom = await advisor_doc_text(uid, f"{prefix}{PERSONA_DOC}")  # 层3 本项目
     if custom.strip():
-        return custom, f"{prefix}{PERSONA_DOC}"
-    book = prefix.rstrip("/")
-    builtin = BOOK_PERSONA_FILES.get(book)
-    if builtin:
-        return advisor_prompt_file(builtin), f"{builtin}（{book}）"
-    return GENERIC_ADVISOR_PROMPT, "通用人格"
+        return f"{base}\n\n---\n\n{custom}", f"通用底座 + {prefix}{PERSONA_DOC}"
+    return base, "通用底座（本书无 _advisor.md，缺项目坐标）"
 
 
 async def moonshot_chat(system: str, user: str, max_tokens: int = 2000) -> str:
