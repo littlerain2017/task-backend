@@ -1691,9 +1691,14 @@ class ScifiAdvisorRequest(BaseModel):
     name: str = ""           # 当前打开的文档名，用于判断在哪本书里（必填）
 
 
-def advisor_system_prompt() -> str:
-    """THE ROOM 专用人格（镜像自 .claude/skills/scifi-advisor）。"""
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scifi_advisor_prompt.md")
+# 书名 → 后端自带的专属人格文件。书内 _advisor.md 优先级更高。
+BOOK_PERSONA_FILES = {
+    "THE ROOM": "scifi_advisor_prompt.md",   # 镜像自该书 .claude/skills/scifi-advisor
+}
+
+
+def advisor_prompt_file(filename: str) -> str:
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
     with open(path, encoding="utf-8") as f:
         return f.read()
 
@@ -1732,8 +1737,10 @@ async def advisor_persona(uid: str, prefix: str):
     custom = await advisor_doc_text(uid, f"{prefix}{PERSONA_DOC}")
     if custom.strip():
         return custom, f"{prefix}{PERSONA_DOC}"
-    if prefix == "":
-        return advisor_system_prompt(), "scifi_advisor_prompt.md（THE ROOM）"
+    book = prefix.rstrip("/")
+    builtin = BOOK_PERSONA_FILES.get(book)
+    if builtin:
+        return advisor_prompt_file(builtin), f"{builtin}（{book}）"
     return GENERIC_ADVISOR_PROMPT, "通用人格"
 
 

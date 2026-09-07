@@ -1,4 +1,4 @@
-<!-- 本文件镜像自 ~/Documents/TheRoom/.claude/skills/scifi-advisor/SKILL.md
+<!-- 本文件镜像自 ~/Documents/Books/THE ROOM/.claude/skills/scifi-advisor/SKILL.md
      该 skill 在隐藏目录 .claude/ 下，watcher 不同步，故随后端仓库一起部署。
      改了 SKILL.md 后需要重新 cp 过来并 push。 -->
 
