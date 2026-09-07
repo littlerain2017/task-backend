@@ -1931,12 +1931,23 @@ document.addEventListener("selectionchange", () => {
   }
 });
 
+function advisorBookLabel() {
+  if (!current) return "";
+  return bookOf(current.name) || "根书架";
+}
+
 function toggleAdvisor() {
   const p = $("advisorPanel");
   const opening = !p.classList.contains("open");
   $("marksPanel").classList.remove("open");
   p.classList.toggle("open", opening);
-  if (opening) $("advisorQ").focus();
+  if (opening) {
+    const b = advisorBookLabel();
+    $("advisorHint").textContent = b
+      ? `当前：《${b}》· 只读这本书的 00_ 设定。查冲突需先在正文里选中一段。`
+      : "先打开一篇文档，顾问才知道你在哪本书里。";
+    $("advisorQ").focus();
+  }
 }
 
 function closeAdvisor() {
@@ -1962,6 +1973,10 @@ async function runAdvisor(mode) {
   const live = document.getSelection().toString().trim();
   const selection = live || advisorLastSel;
 
+  if (!current) {
+    out.innerHTML = '<span class="ad-err">先打开一篇文档，顾问才知道你在哪本书里。</span>';
+    return;
+  }
   if (mode === "ask" && !question) {
     out.innerHTML = '<span class="ad-err">先写一个问题。</span>';
     return;
@@ -1989,6 +2004,8 @@ async function runAdvisor(mode) {
       out.innerHTML = '<span class="ad-err">' + (data.error || "调用失败") + "</span>";
     } else {
       out.innerHTML = advisorRender(data.answer);
+      $("advisorHint").textContent =
+        `依据《${data.book}》· ${data.canon} · 人格：${data.persona}`;
     }
   } catch (e) {
     out.innerHTML = '<span class="ad-err">网络错误：' + e.message + "</span>";

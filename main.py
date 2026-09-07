@@ -1642,6 +1642,8 @@ async def writing_watcher_script():
 
 
 # ==================== 科幻顾问（Kimi / Moonshot） ====================
+# 按书隔离：从当前文档名推出所在的书，只在那本书里找 00_ 设定 / 07_ 冲突清单 /
+# _advisor.md 专属人格。根书架（THE ROOM）用 scifi_advisor_prompt.md，其它书用通用人格。
 
 MOONSHOT_API_KEY = os.environ.get("MOONSHOT_API_KEY", "").strip()
 MOONSHOT_MODEL = os.environ.get("MOONSHOT_MODEL", "kimi-k3")
@@ -1649,8 +1651,36 @@ MOONSHOT_MODEL = os.environ.get("MOONSHOT_MODEL", "kimi-k3")
 MOONSHOT_BASE_URL = os.environ.get("MOONSHOT_BASE_URL", "https://api.moonshot.cn/v1").rstrip("/")
 MOONSHOT_URL = f"{MOONSHOT_BASE_URL}/chat/completions"
 
-CANON_DOC = "00_worldbuilding.md"       # 世界观唯一权威
-CONFLICT_DOC = "07_conflict_audit.md"   # 冲突清单，check 模式的检查表
+CANON_PREFIX = "00_"        # 每本书的世界观权威：书内第一个 00_ 开头的文档
+CONFLICT_PREFIX = "07_"     # 每本书的冲突清单：书内第一个 07_ 开头的文档
+PERSONA_DOC = "_advisor.md" # 可选：书内专属顾问人格，存在则覆盖默认
+
+GENERIC_ADVISOR_PROMPT = """# 设定顾问
+
+你是这本书的设定顾问。只管三件事：设定的可信度、类型套路避坑（撞车）、设定信息的释放节奏。
+不碰人物弧光、场次结构、文笔——那不是你的活。
+
+## 使用前必读
+1. 下面给出的世界观文档是唯一权威。任何建议若与它冲突，先报冲突，不擅自改设定。
+2. 先从世界观文档里读出这本书的类型与调性，按它的规矩判断，不要套别的类型的标准。
+3. 一切建议以"能不能长在日常摩擦上"为准，不以"科学/逻辑上能不能实现"为准。
+   凡是需要角色停下来讲解才成立的设定，一律判不合格。
+
+## 可信度三判据
+一条设定成立，只需满足至少两条：
+- **守恒**：这件事有没有"总量不变"的账要平？谁多了谁就少了？
+- **代价**：谁付钱、谁排队、谁半夜被叫起来干这个脏活？
+- **痕迹**：这套机制会生出什么表格、术语、KPI、黑话、投诉流程？
+
+最容易露馅的三种写法：设定只在被解释时存在；设定没有代价；设定完美运转（没有故障、没有人骂它）。
+
+## 撞车
+判断时先想同类型里最出名的三到五部作品，说清楚撞在哪、危险度、怎么差异化。
+撞车不等于不能写，等于必须知道自己在跟谁同台。
+
+## 信息释放
+设定不要一次讲完。优先级：先让读者看到后果，再看到规则，最后（或永远不）看到原理。
+"""
 
 
 class ScifiAdvisorRequest(BaseModel):
@@ -1658,21 +1688,53 @@ class ScifiAdvisorRequest(BaseModel):
     mode: str = "ask"        # ask=提设定问顾问 / check=查与 canon 的冲突
     question: str = ""       # ask 模式的问题
     selection: str = ""      # 编辑器里选中的段落（两种模式都可选）
-    name: str = ""           # check 模式：正在检查的文档名（仅用于回显）
+    name: str = ""           # 当前打开的文档名，用于判断在哪本书里（必填）
 
 
 def advisor_system_prompt() -> str:
-    """顾问人格来自 scifi_advisor_prompt.md（镜像自 .claude/skills/scifi-advisor）。"""
+    """THE ROOM 专用人格（镜像自 .claude/skills/scifi-advisor）。"""
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scifi_advisor_prompt.md")
     with open(path, encoding="utf-8") as f:
         return f.read()
 
 
+def advisor_book_prefix(name: str) -> str:
+    """'写作系统带我飞/第一章.md' -> '写作系统带我飞/'；根书架文档 -> ''。"""
+    i = name.find("/")
+    return name[: i + 1] if i > 0 else ""
+
+
+async def advisor_find_doc(uid: str, prefix: str, starts: str) -> str:
+    """在某本书里找第一个文件名以 starts 开头的文档，返回完整 name；没有返回 ''。"""
+    docs = await writing_docs_of(uid, with_content=False)
+    for n in sorted(d.get("name", "") for d in docs):
+        if not n.startswith(prefix):
+            continue
+        rel = n[len(prefix):]
+        if "/" in rel:              # 更深一层的子目录不算这本书的
+            continue
+        if rel.startswith(starts):
+            return n
+    return ""
+
+
 async def advisor_doc_text(uid: str, name: str) -> str:
+    if not name:
+        return ""
     doc = await writing_query_doc("docs", f"{uid}:{name}")
     if not doc:
         return ""
     return content_decode(doc.get("contentB64", ""))
+
+
+async def advisor_persona(uid: str, prefix: str):
+    """返回 (人格文本, 来源说明)。"""
+    custom = await advisor_doc_text(uid, f"{prefix}{PERSONA_DOC}")
+    if custom.strip():
+        return custom, f"{prefix}{PERSONA_DOC}"
+    if prefix == "":
+        return advisor_system_prompt(), "scifi_advisor_prompt.md（THE ROOM）"
+    return GENERIC_ADVISOR_PROMPT, "通用人格"
 
 
 async def moonshot_chat(system: str, user: str, max_tokens: int = 2000) -> str:
@@ -1710,7 +1772,7 @@ async def moonshot_chat(system: str, user: str, max_tokens: int = 2000) -> str:
     return choices[0].get("message", {}).get("content", "").strip()
 
 
-ASK_TEMPLATE = """下面是 THE ROOM 的世界观权威设定（00_worldbuilding.md）：
+ASK_TEMPLATE = """下面是《{book}》的世界观权威设定（{canon_name}）：
 
 <canon>
 {canon}
@@ -1725,16 +1787,16 @@ ASK_TEMPLATE = """下面是 THE ROOM 的世界观权威设定（00_worldbuilding
 成立 / 有条件成立 / 不成立 —— 一句话结论。
 
 ## 依据
-命中了哪几条可信度判据（守恒 / 代价 / 官僚痕迹），逐条说明。若与 canon 冲突，先报冲突并指出 canon 的行号或章节。
+命中了哪几条可信度判据，逐条说明。若与 canon 冲突，先报冲突并指出 canon 的位置。
 
 ## 撞车风险
-有无与既有科幻作品重合，危险度如何，怎么差异化。没有就写"无明显撞车"。
+有无与既有作品重合，危险度如何，怎么差异化。没有就写"无明显撞车"。
 
 ## 建议写法
 具体到能落在日常摩擦上的写法，不要抽象建议。凡是需要角色停下来讲解才成立的，直接判不合格。
 """
 
-CHECK_TEMPLATE = """你在做设定一致性检查。下面是 THE ROOM 的世界观权威设定，以及一份已知冲突清单。
+CHECK_TEMPLATE = """你在做设定一致性检查。下面是《{book}》的世界观权威设定（{canon_name}），以及一份已知冲突清单。
 
 <canon>
 {canon}
@@ -1777,14 +1839,27 @@ async def scifi_advisor(req: ScifiAdvisorRequest):
     if mode not in ("ask", "check"):
         return {"ok": False, "error": "mode 只能是 ask 或 check"}
 
+    name = (req.name or "").strip()
+    if not name:
+        return {"ok": False, "error": "请先打开一篇文档——顾问需要知道你在哪本书里"}
+    prefix = advisor_book_prefix(name)
+    book = prefix.rstrip("/") or "根书架"
+
     try:
-        canon = await advisor_doc_text(uid, CANON_DOC)
+        canon_name = await advisor_find_doc(uid, prefix, CANON_PREFIX)
+        canon = await advisor_doc_text(uid, canon_name)
+        persona, persona_src = await advisor_persona(uid, prefix)
     except RuntimeError as e:
-        print(f"[advisor] 读取 canon 失败: {e}")
+        print(f"[advisor] 读取《{book}》设定失败: {e}")
+        return {"ok": False, "error": "服务器内部错误"}
+    except OSError as e:
+        print(f"[advisor] 读取顾问 prompt 失败: {e}")
         return {"ok": False, "error": "服务器内部错误"}
 
-    if not canon:
-        return {"ok": False, "error": f"云端没有 {CANON_DOC}，请先让 watcher 同步一次"}
+    if not canon_name or not canon.strip():
+        return {"ok": False,
+                "error": f"《{book}》里没有 {CANON_PREFIX} 开头的设定文件。"
+                         f"在这本书的文件夹里建一个（如 {CANON_PREFIX}世界观设定.md）就行"}
 
     if mode == "ask":
         question = req.question.strip()
@@ -1794,7 +1869,8 @@ async def scifi_advisor(req: ScifiAdvisorRequest):
         if req.selection.strip():
             selection_block = f"\n作者选中的段落：\n<选中>\n{req.selection.strip()}\n</选中>\n"
         user_msg = ASK_TEMPLATE.format(
-            canon=canon, question=question, selection_block=selection_block
+            book=book, canon_name=canon_name, canon=canon,
+            question=question, selection_block=selection_block,
         )
         max_tokens = 2000
     else:
@@ -1802,39 +1878,40 @@ async def scifi_advisor(req: ScifiAdvisorRequest):
         if not text:
             return {"ok": False, "error": "请先选中要检查的文本"}
         try:
-            conflicts = await advisor_doc_text(uid, CONFLICT_DOC)
+            conflicts_name = await advisor_find_doc(uid, prefix, CONFLICT_PREFIX)
+            conflicts = await advisor_doc_text(uid, conflicts_name)
         except RuntimeError as e:
-            print(f"[advisor] 读取冲突清单失败: {e}")
+            print(f"[advisor] 读取《{book}》冲突清单失败: {e}")
             return {"ok": False, "error": "服务器内部错误"}
-        if not conflicts:
-            conflicts = "（云端暂无冲突清单，只依据 canon 检查）"
+        if not conflicts.strip():
+            conflicts = "（这本书暂无冲突清单，只依据 canon 检查）"
         user_msg = CHECK_TEMPLATE.format(
-            canon=canon, conflicts=conflicts, name=req.name or "未命名", text=text
+            book=book, canon_name=canon_name, canon=canon,
+            conflicts=conflicts, name=name, text=text,
         )
         max_tokens = 2500
 
     try:
-        answer = await moonshot_chat(advisor_system_prompt(), user_msg, max_tokens)
+        answer = await moonshot_chat(persona, user_msg, max_tokens)
     except RuntimeError as e:
         print(f"[advisor] Kimi 调用失败: {e}")
         return {"ok": False, "error": str(e)}
-    except OSError as e:
-        print(f"[advisor] 读取顾问 prompt 失败: {e}")
-        return {"ok": False, "error": "服务器内部错误"}
 
     if not answer:
         return {"ok": False, "error": "Kimi 返回了空内容"}
 
-    return {"ok": True, "mode": mode, "answer": answer}
+    return {"ok": True, "mode": mode, "answer": answer,
+            "book": book, "canon": canon_name, "persona": persona_src}
 
 
 class AdvisorDiagRequest(BaseModel):
     token: str
+    name: str = ""   # 可选：传当前文档名，顺便报告这本书解析到的设定/清单/人格
 
 
 @app.post("/scifi-advisor/diag")
 async def scifi_advisor_diag(req: AdvisorDiagRequest):
-    """自查：环境变量、prompt 文件、canon 是否就位。不返回密钥本身。"""
+    """自查：环境变量、prompt 文件、指定书的设定是否就位。不返回密钥本身。"""
     uid = await writing_uid_from_token(req.token)
     if not uid:
         return {"ok": False, "error": "无效令牌"}
@@ -1842,17 +1919,9 @@ async def scifi_advisor_diag(req: AdvisorDiagRequest):
     key = os.environ.get("MOONSHOT_API_KEY", "")
     prompt_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                "scifi_advisor_prompt.md")
-
-    canon_len = conflicts_len = -1
-    try:
-        canon_len = len(await advisor_doc_text(uid, CANON_DOC))
-        conflicts_len = len(await advisor_doc_text(uid, CONFLICT_DOC))
-    except RuntimeError as e:
-        print(f"[advisor/diag] 读取 canon 失败: {e}")
-
     env_names = sorted(n for n in os.environ if "MOONSHOT" in n.upper())
 
-    return {
+    out = {
         "ok": True,
         "key_present": bool(key.strip()),
         "key_len": len(key),
@@ -1862,6 +1931,21 @@ async def scifi_advisor_diag(req: AdvisorDiagRequest):
         "model": MOONSHOT_MODEL,
         "base_url": MOONSHOT_BASE_URL,
         "prompt_file_ok": os.path.exists(prompt_path),
-        "canon_chars": canon_len,
-        "conflicts_chars": conflicts_len,
     }
+
+    name = (req.name or "").strip()
+    if name:
+        prefix = advisor_book_prefix(name)
+        try:
+            canon_name = await advisor_find_doc(uid, prefix, CANON_PREFIX)
+            conflicts_name = await advisor_find_doc(uid, prefix, CONFLICT_PREFIX)
+            _, persona_src = await advisor_persona(uid, prefix)
+            out["book"] = prefix.rstrip("/") or "根书架"
+            out["canon"] = canon_name or None
+            out["canon_chars"] = len(await advisor_doc_text(uid, canon_name))
+            out["conflicts"] = conflicts_name or None
+            out["persona"] = persona_src
+        except RuntimeError as e:
+            print(f"[advisor/diag] 读取设定失败: {e}")
+            out["book_error"] = "读取设定失败"
+    return out
