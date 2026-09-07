@@ -1645,7 +1645,9 @@ async def writing_watcher_script():
 
 MOONSHOT_API_KEY = os.environ.get("MOONSHOT_API_KEY", "").strip()
 MOONSHOT_MODEL = os.environ.get("MOONSHOT_MODEL", "kimi-k3")
-MOONSHOT_URL = "https://api.moonshot.cn/v1/chat/completions"
+# 用中转站/代理时改这个（OpenAI 兼容格式，填到 /v1 为止）
+MOONSHOT_BASE_URL = os.environ.get("MOONSHOT_BASE_URL", "https://api.moonshot.cn/v1").rstrip("/")
+MOONSHOT_URL = f"{MOONSHOT_BASE_URL}/chat/completions"
 
 CANON_DOC = "00_worldbuilding.md"       # 世界观唯一权威
 CONFLICT_DOC = "07_conflict_audit.md"   # 冲突清单，check 模式的检查表
@@ -1858,6 +1860,7 @@ async def scifi_advisor_diag(req: AdvisorDiagRequest):
         "key_has_whitespace": key != key.strip(),
         "moonshot_env_names": env_names,
         "model": MOONSHOT_MODEL,
+        "base_url": MOONSHOT_BASE_URL,
         "prompt_file_ok": os.path.exists(prompt_path),
         "canon_chars": canon_len,
         "conflicts_chars": conflicts_len,
