@@ -470,6 +470,109 @@
   #marksPanel .mp-item .bk { font-size: 11px; flex-shrink: 0; }
   #marksPanel .mp-empty { color: var(--muted); text-align: center; padding: 24px 8px; line-height: 1.9; }
 
+  /* ===== 科幻顾问面板 ===== */
+  #advisorPanel {
+    position: fixed;
+    top: 64px;
+    right: 16px;
+    z-index: 31;
+    width: 400px;
+    max-width: calc(100vw - 32px);
+    max-height: 76vh;
+    background: var(--header);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--gold-line);
+    border-radius: 12px;
+    display: none;
+    flex-direction: column;
+    font-size: 13px;
+  }
+  #advisorPanel.open { display: flex; }
+  #advisorPanel .ad-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 14px 10px;
+    border-bottom: 1px solid var(--line);
+    flex-shrink: 0;
+  }
+  #advisorPanel .ad-title {
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    color: var(--gold);
+    flex: 1;
+  }
+  #advisorPanel .ad-x {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    padding: 2px 4px;
+  }
+  #advisorPanel .ad-x:hover { color: var(--ink); }
+  #advisorPanel .ad-body { padding: 12px 14px; overflow-y: auto; flex: 1; }
+  #advisorPanel textarea {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 62px;
+    resize: vertical;
+    background: rgba(0, 0, 0, 0.22);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--ink);
+    padding: 9px 10px;
+    font: inherit;
+    line-height: 1.65;
+    outline: none;
+  }
+  #advisorPanel textarea:focus { border-color: var(--gold-line); }
+  #advisorPanel textarea::placeholder { color: var(--muted); }
+  #advisorPanel .ad-row { display: flex; gap: 8px; margin-top: 10px; }
+  #advisorPanel .ad-go {
+    flex: 1;
+    background: rgba(211, 178, 92, 0.14);
+    border: 1px solid var(--gold-line);
+    color: var(--gold-bright);
+    border-radius: 8px;
+    padding: 8px 10px;
+    cursor: pointer;
+    font: inherit;
+    letter-spacing: 0.04em;
+    transition: background 140ms ease;
+  }
+  #advisorPanel .ad-go:hover:not(:disabled) { background: rgba(211, 178, 92, 0.24); }
+  #advisorPanel .ad-go:disabled { opacity: 0.45; cursor: default; }
+  #advisorPanel .ad-hint {
+    color: var(--muted);
+    font-size: 11.5px;
+    line-height: 1.75;
+    margin-top: 9px;
+  }
+  #advisorPanel .ad-out {
+    margin-top: 14px;
+    padding-top: 13px;
+    border-top: 1px solid var(--line);
+    color: var(--ink-soft);
+    line-height: 1.85;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  #advisorPanel .ad-out:empty { display: none; }
+  #advisorPanel .ad-out h3 {
+    color: var(--gold);
+    font-size: 12px;
+    letter-spacing: 0.07em;
+    margin: 15px 0 5px;
+    font-weight: 600;
+  }
+  #advisorPanel .ad-out h3:first-child { margin-top: 0; }
+  #advisorPanel .ad-out strong { color: var(--ink); font-weight: 600; }
+  #advisorPanel .ad-err { color: var(--red); }
+  #advisorPanel .ad-wait { color: var(--muted); font-style: italic; }
+
   /* ===== 书架（全屏入口） ===== */
   #shelfView {
     position: fixed;
@@ -674,6 +777,7 @@
         <button class="btn" onclick="copyDoc()">复制</button>
         <button class="btn" onclick="toggleMark()" title="标记/取消标记当前段落（⌘M），⌘⇧M 跳转书签">标记</button>
         <button class="btn" onclick="toggleMarksPanel()" title="查看全部书签">书签</button>
+        <button class="btn" id="advisorBtn" onclick="toggleAdvisor()" title="科幻顾问：问设定 / 查冲突">顾问</button>
         <button class="btn" onclick="shareBook()" title="把这本书只读分享给朋友，可留言">分享</button>
         <button class="btn" onclick="editToken()">令牌</button>
         <button class="btn" onclick="togglePrefs()" title="阅读舒适度（⌘D）">Aa</button>
@@ -704,6 +808,23 @@
   <div class="fade"></div>
 
   <div id="marksPanel"></div>
+
+  <div id="advisorPanel">
+    <div class="ad-head">
+      <span class="ad-title">科幻顾问 · THE ROOM</span>
+      <button class="ad-x" onclick="closeAdvisor()" title="关闭">✕</button>
+    </div>
+    <div class="ad-body">
+      <textarea id="advisorQ" placeholder="提一条新设定，或问「这样讲得通吗 / 会不会撞车 / 这段该怎么交代」"></textarea>
+      <div class="ad-row">
+        <button class="ad-go" id="advisorAsk" onclick="runAdvisor('ask')">问设定</button>
+        <button class="ad-go" id="advisorCheck" onclick="runAdvisor('check')">查冲突</button>
+      </div>
+      <div class="ad-hint" id="advisorHint">依据 00_worldbuilding.md 作答。查冲突需先在正文里选中一段。</div>
+      <div class="ad-out" id="advisorOut"></div>
+    </div>
+  </div>
+
   <div id="hlPalette">
     <span class="sw" data-c="red"    style="background:#e6897a" title="红"></span>
     <span class="sw" data-c="amber"  style="background:#e0a860" title="橙"></span>
@@ -1795,6 +1916,88 @@ if (token) {
 setInterval(refresh, REFRESH_MS);
 setInterval(renderCounts, 30000);
 window.addEventListener("beforeunload", () => { if (dirty) save(); });
+
+/* ===== 科幻顾问 ===== */
+let advisorBusy = false;
+let advisorLastSel = "";
+
+/* 记住编辑器里最后一次非空选区——点面板按钮时正文选区可能已失焦 */
+document.addEventListener("selectionchange", () => {
+  const sel = document.getSelection();
+  if (!sel || sel.isCollapsed) return;
+  const anchor = sel.anchorNode;
+  if (anchor && $("editor").contains(anchor.nodeType === 1 ? anchor : anchor.parentNode)) {
+    advisorLastSel = sel.toString().trim();
+  }
+});
+
+function toggleAdvisor() {
+  const p = $("advisorPanel");
+  const opening = !p.classList.contains("open");
+  $("marksPanel").classList.remove("open");
+  p.classList.toggle("open", opening);
+  if (opening) $("advisorQ").focus();
+}
+
+function closeAdvisor() {
+  $("advisorPanel").classList.remove("open");
+}
+
+/* 极简 markdown → HTML，只处理顾问会输出的三种标记 */
+function advisorRender(text) {
+  const esc = text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  return esc
+    .replace(/^#{2,3} +(.+)$/gm, "<h3>$1</h3>")
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+}
+
+async function runAdvisor(mode) {
+  if (advisorBusy) return;
+
+  const out = $("advisorOut");
+  const question = $("advisorQ").value.trim();
+  const live = document.getSelection().toString().trim();
+  const selection = live || advisorLastSel;
+
+  if (mode === "ask" && !question) {
+    out.innerHTML = '<span class="ad-err">先写一个问题。</span>';
+    return;
+  }
+  if (mode === "check" && !selection) {
+    out.innerHTML = '<span class="ad-err">查冲突需要先在正文里选中一段文字。</span>';
+    return;
+  }
+
+  advisorBusy = true;
+  $("advisorAsk").disabled = true;
+  $("advisorCheck").disabled = true;
+  out.innerHTML = '<span class="ad-wait">' +
+    (mode === "ask" ? "顾问正在读设定…" : "正在逐条比对冲突清单…") +
+    "（十几秒）</span>";
+
+  try {
+    const data = await api("/scifi-advisor", {
+      mode,
+      question,
+      selection,
+      name: current ? current.name : "",
+    });
+    if (!data.ok) {
+      out.innerHTML = '<span class="ad-err">' + (data.error || "调用失败") + "</span>";
+    } else {
+      out.innerHTML = advisorRender(data.answer);
+    }
+  } catch (e) {
+    out.innerHTML = '<span class="ad-err">网络错误：' + e.message + "</span>";
+  } finally {
+    advisorBusy = false;
+    $("advisorAsk").disabled = false;
+    $("advisorCheck").disabled = false;
+  }
+}
 </script>
 </body>
 </html>

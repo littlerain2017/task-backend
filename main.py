@@ -129,7 +129,8 @@ class WorkContextLoadRequest(BaseModel):
     openid: str
 
 
-async def ask_claude_json(prompt: str, max_tokens: int = 1200):
+async def ask_claude_json(prompt: str, max_tokens: int = 1200,
+                          model: str = "claude-haiku-4-5-20251001"):
     import json, re
     async with httpx.AsyncClient(timeout=45) as client:
         resp = await client.post(
@@ -140,7 +141,7 @@ async def ask_claude_json(prompt: str, max_tokens: int = 1200):
                 "content-type": "application/json"
             },
             json={
-                "model": "claude-haiku-4-5-20251001",
+                "model": model,
                 "max_tokens": max_tokens,
                 "messages": [{"role": "user", "content": prompt}]
             }
@@ -1638,3 +1639,188 @@ async def writing_watcher_script():
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "watcher_client.py")
     with open(script, encoding="utf-8") as f:
         return PlainTextResponse(f.read(), media_type="text/x-python")
+
+
+# ==================== 科幻顾问（Kimi / Moonshot） ====================
+
+MOONSHOT_API_KEY = os.environ.get("MOONSHOT_API_KEY", "").strip()
+MOONSHOT_MODEL = os.environ.get("MOONSHOT_MODEL", "kimi-k3")
+MOONSHOT_URL = "https://api.moonshot.cn/v1/chat/completions"
+
+CANON_DOC = "00_worldbuilding.md"       # 世界观唯一权威
+CONFLICT_DOC = "07_conflict_audit.md"   # 冲突清单，check 模式的检查表
+
+
+class ScifiAdvisorRequest(BaseModel):
+    token: str
+    mode: str = "ask"        # ask=提设定问顾问 / check=查与 canon 的冲突
+    question: str = ""       # ask 模式的问题
+    selection: str = ""      # 编辑器里选中的段落（两种模式都可选）
+    name: str = ""           # check 模式：正在检查的文档名（仅用于回显）
+
+
+def advisor_system_prompt() -> str:
+    """顾问人格来自 scifi_advisor_prompt.md（镜像自 .claude/skills/scifi-advisor）。"""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scifi_advisor_prompt.md")
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
+async def advisor_doc_text(uid: str, name: str) -> str:
+    doc = await writing_query_doc("docs", f"{uid}:{name}")
+    if not doc:
+        return ""
+    return content_decode(doc.get("contentB64", ""))
+
+
+async def moonshot_chat(system: str, user: str, max_tokens: int = 2000) -> str:
+    """调用 Kimi。失败时抛 RuntimeError，由端点统一转成 {ok:false}。"""
+    if not MOONSHOT_API_KEY:
+        raise RuntimeError("未配置 MOONSHOT_API_KEY")
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(
+                MOONSHOT_URL,
+                headers={
+                    "Authorization": f"Bearer {MOONSHOT_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": MOONSHOT_MODEL,
+                    "temperature": 0.3,
+                    "max_tokens": max_tokens,
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                },
+            )
+    except httpx.HTTPError as e:
+        raise RuntimeError(f"网络错误: {e}")
+
+    if resp.status_code != 200:
+        raise RuntimeError(f"Kimi 返回 {resp.status_code}: {resp.text[:200]}")
+
+    data = resp.json()
+    choices = data.get("choices") or []
+    if not choices:
+        raise RuntimeError(f"Kimi 响应异常: {str(data)[:200]}")
+    return choices[0].get("message", {}).get("content", "").strip()
+
+
+ASK_TEMPLATE = """下面是 THE ROOM 的世界观权威设定（00_worldbuilding.md）：
+
+<canon>
+{canon}
+</canon>
+{selection_block}
+作者的问题：
+{question}
+
+请按以下结构回答，不要写多余的开场白：
+
+## 判断
+成立 / 有条件成立 / 不成立 —— 一句话结论。
+
+## 依据
+命中了哪几条可信度判据（守恒 / 代价 / 官僚痕迹），逐条说明。若与 canon 冲突，先报冲突并指出 canon 的行号或章节。
+
+## 撞车风险
+有无与既有科幻作品重合，危险度如何，怎么差异化。没有就写"无明显撞车"。
+
+## 建议写法
+具体到能落在日常摩擦上的写法，不要抽象建议。凡是需要角色停下来讲解才成立的，直接判不合格。
+"""
+
+CHECK_TEMPLATE = """你在做设定一致性检查。下面是 THE ROOM 的世界观权威设定，以及一份已知冲突清单。
+
+<canon>
+{canon}
+</canon>
+
+<冲突清单>
+{conflicts}
+</冲突清单>
+
+待检查的文本（来自《{name}》）：
+<待检查>
+{text}
+</待检查>
+
+任务：把待检查文本**逐条**对照上面的冲突清单和 canon，只报告真正命中的问题。
+
+规则：
+- 逐条比对，不要通读了事。清单里每一条都要过一遍。
+- 只报实质冲突（设定矛盾、事实打架、违反硬规则），不报措辞差异、不报文笔问题。
+- 命中清单里已登记的冲突时，写出编号（如 C-02）。
+- 发现清单外的新冲突，标注【新】。
+- 确实没有问题就只回一句"未发现与 canon 的冲突"，不要凑数。
+
+输出格式，每条一段：
+
+**[编号或【新】] 一句话说明冲突**
+- 待检查文本里的说法：……
+- canon / 清单里的说法：……
+- 建议：……
+"""
+
+
+@app.post("/scifi-advisor")
+async def scifi_advisor(req: ScifiAdvisorRequest):
+    uid = await writing_uid_from_token(req.token)
+    if not uid:
+        return {"ok": False, "error": "无效令牌"}
+
+    mode = (req.mode or "ask").strip()
+    if mode not in ("ask", "check"):
+        return {"ok": False, "error": "mode 只能是 ask 或 check"}
+
+    try:
+        canon = await advisor_doc_text(uid, CANON_DOC)
+    except RuntimeError as e:
+        print(f"[advisor] 读取 canon 失败: {e}")
+        return {"ok": False, "error": "服务器内部错误"}
+
+    if not canon:
+        return {"ok": False, "error": f"云端没有 {CANON_DOC}，请先让 watcher 同步一次"}
+
+    if mode == "ask":
+        question = req.question.strip()
+        if not question:
+            return {"ok": False, "error": "问题为空"}
+        selection_block = ""
+        if req.selection.strip():
+            selection_block = f"\n作者选中的段落：\n<选中>\n{req.selection.strip()}\n</选中>\n"
+        user_msg = ASK_TEMPLATE.format(
+            canon=canon, question=question, selection_block=selection_block
+        )
+        max_tokens = 2000
+    else:
+        text = req.selection.strip()
+        if not text:
+            return {"ok": False, "error": "请先选中要检查的文本"}
+        try:
+            conflicts = await advisor_doc_text(uid, CONFLICT_DOC)
+        except RuntimeError as e:
+            print(f"[advisor] 读取冲突清单失败: {e}")
+            return {"ok": False, "error": "服务器内部错误"}
+        if not conflicts:
+            conflicts = "（云端暂无冲突清单，只依据 canon 检查）"
+        user_msg = CHECK_TEMPLATE.format(
+            canon=canon, conflicts=conflicts, name=req.name or "未命名", text=text
+        )
+        max_tokens = 2500
+
+    try:
+        answer = await moonshot_chat(advisor_system_prompt(), user_msg, max_tokens)
+    except RuntimeError as e:
+        print(f"[advisor] Kimi 调用失败: {e}")
+        return {"ok": False, "error": str(e)}
+    except OSError as e:
+        print(f"[advisor] 读取顾问 prompt 失败: {e}")
+        return {"ok": False, "error": "服务器内部错误"}
+
+    if not answer:
+        return {"ok": False, "error": "Kimi 返回了空内容"}
+
+    return {"ok": True, "mode": mode, "answer": answer}
