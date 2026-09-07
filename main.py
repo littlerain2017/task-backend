@@ -1824,3 +1824,41 @@ async def scifi_advisor(req: ScifiAdvisorRequest):
         return {"ok": False, "error": "Kimi 返回了空内容"}
 
     return {"ok": True, "mode": mode, "answer": answer}
+
+
+class AdvisorDiagRequest(BaseModel):
+    token: str
+
+
+@app.post("/scifi-advisor/diag")
+async def scifi_advisor_diag(req: AdvisorDiagRequest):
+    """自查：环境变量、prompt 文件、canon 是否就位。不返回密钥本身。"""
+    uid = await writing_uid_from_token(req.token)
+    if not uid:
+        return {"ok": False, "error": "无效令牌"}
+
+    key = os.environ.get("MOONSHOT_API_KEY", "")
+    prompt_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "scifi_advisor_prompt.md")
+
+    canon_len = conflicts_len = -1
+    try:
+        canon_len = len(await advisor_doc_text(uid, CANON_DOC))
+        conflicts_len = len(await advisor_doc_text(uid, CONFLICT_DOC))
+    except RuntimeError as e:
+        print(f"[advisor/diag] 读取 canon 失败: {e}")
+
+    env_names = sorted(n for n in os.environ if "MOONSHOT" in n.upper())
+
+    return {
+        "ok": True,
+        "key_present": bool(key.strip()),
+        "key_len": len(key),
+        "key_prefix": key.strip()[:6] if key.strip() else "",
+        "key_has_whitespace": key != key.strip(),
+        "moonshot_env_names": env_names,
+        "model": MOONSHOT_MODEL,
+        "prompt_file_ok": os.path.exists(prompt_path),
+        "canon_chars": canon_len,
+        "conflicts_chars": conflicts_len,
+    }
