@@ -69,6 +69,8 @@ class TaskRequest(BaseModel):
     openid: str
     tasks: list[str]
     remind_hours: float = REMIND_HOURS
+
+
 @app.post("/login")
 async def login(req: LoginRequest):
     url = (
@@ -97,6 +99,234 @@ async def submit_tasks(req: TaskRequest):
     conn.commit()
     conn.close()
     return {"message": f"任务已保存，将在{req.remind_hours}小时后提醒"}
+
+
+async def get_access_token() -> str:
+    url = (
+        f"https://api.weixin.qq.com/cgi-bin/token"
+        f"?grant_type=client_credential&appid={APPID}&secret={APPSECRET}"
+    )
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(url)
+    return resp.json().get("access_token", "")
+
+
+async def send_reminder(openid: str, tasks: str):
+    token = await get_access_token()
+    url = f"https://api.weixin.qq.com/cgi-bin/message/subscribe/send?access_token={token}"
+    task_summary = tasks.replace("\n", "，")[:20]
+    payload = {
+        "touser": openid,
+        "template_id": TEMPLATE_ID,
+        "page": "pages/progress/progress",
+        "data": {
+            "phrase8": {"value": "请更新进度"},
+            "thing4": {"value": task_summary}
+        }
+    }
+    async with httpx.AsyncClient() as client:
+        await client.post(url, json=payload)
+    print(f"[{datetime.now()}] 已发送提醒给 {openid}")
+
+
+async def reminder_loop():
+    while True:
+        conn = sqlite3.connect("tasks.db")
+        now = datetime.now().isoformat()
+        rows = conn.execute(
+            "SELECT id, openid, tasks FROM reminders WHERE remind_at <= ? AND sent = 0",
+            (now,)
+        ).fetchall()
+        for row_id, openid, tasks in rows:
+            await send_reminder(openid, tasks)
+            conn.execute("UPDATE reminders SET sent = 1 WHERE id = ?", (row_id,))
+        conn.commit()
+        conn.close()
+        await asyncio.sleep(60)
+
+
+@app.on_event("startup")
+async def startup():
+    asyncio.create_task(reminder_loop())
+
+
+# ==================== 写作进度（writing-progress 小程序，多用户） ====================
+import re
+import time as time_mod
+from fastapi.responses import HTMLResponse, PlainTextResponse
+import base64
+import hashlib
+import secrets
+from typing import Optional
+from writing_logic import aggregate_file_docs, build_daily, count_text, normalize_files
+
+WRITING_APPID = os.environ.get("WRITING_APPID", "wxff2f10ce15321b4a")
+WRITING_APPSECRET = os.environ.get("WRITING_APPSECRET", "af1333432c29946412e52b37c805d836")
+WRITING_ENV = os.environ.get("WRITING_ENV", "cloud1-d8gpsjp7i273e1044")
+WRITING_MIN_INTERVAL_SECONDS = 3  # 同一令牌两次上报的最小间隔
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+_writing_token = {"value": "", "expires_at": 0.0}
+_writing_last_report_at = {}
+
+
+SOURCE_RE = re.compile(r"^[a-z]{1,20}$")
+
+
+async def writing_access_token() -> str:
+    if _writing_token["value"] and time_mod.time() < _writing_token["expires_at"]:
+        return _writing_token["value"]
+    async with httpx.AsyncClient() as client:
+        resp = await client.post("https://api.weixin.qq.com/cgi-bin/stable_token", json={
+            "grant_type": "client_credential",
+            "appid": WRITING_APPID,
+            "secret": WRITING_APPSECRET,
+        })
+    data = resp.json()
+    if "access_token" not in data:
+        raise RuntimeError(f"获取 access_token 失败: {data}")
+    _writing_token["value"] = data["access_token"]
+    _writing_token["expires_at"] = time_mod.time() + data.get("expires_in", 7200) - 300
+    return _writing_token["value"]
+
+
+async def writing_db(action: str, query: str) -> dict:
+    data = {}
+    for attempt in (1, 2):
+        token = await writing_access_token()
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"https://api.weixin.qq.com/tcb/{action}?access_token={token}",
+                json={"env": WRITING_ENV, "query": query},
+            )
+        data = resp.json()
+        if data.get("errcode") == 40001 and attempt == 1:
+            _writing_token["value"] = ""  # token 失效，换新重试一次
+            continue
+        break
+    if data.get("errcode") != 0:
+        raise RuntimeError(f"{action} 失败: {data.get('errmsg')}")
+    return data
+
+
+async def writing_query_doc(collection: str, doc_id: str):
+    q = f'db.collection("{collection}").where({{_id:{json.dumps(doc_id)}}}).get()'
+    rows = (await writing_db("databasequery", q)).get("data", [])
+    return json.loads(rows[0]) if rows else None
+
+
+async def writing_upsert(collection: str, doc_id: str, doc: dict):
+    q = (f'db.collection("{collection}").where({{_id:{json.dumps(doc_id)}}})'
+         f'.update({{data:{json.dumps(doc, ensure_ascii=False)}}})')
+    data = await writing_db("databaseupdate", q)
+    if data.get("matched", 0) == 0:
+        add_q = (f'db.collection("{collection}")'
+                 f'.add({{data:{json.dumps({"_id": doc_id, **doc}, ensure_ascii=False)}}})')
+        await writing_db("databaseadd", add_q)
+
+
+# ---------- 内容级同步：网页与电脑编辑同一批文件 ----------
+# 允许一层子目录作为「书」：书名/章节名.md；禁止路径穿越与隐藏文件
+# 书名/文件.md 或 书名/分类/文件.md（最多两层目录）。
+# 每段首字符禁止 "." ，路径穿越与隐藏文件仍被挡住。
+DOC_NAME_RE = re.compile(r"^(?:[^/\\.][^/\\]{0,60}/){0,2}[^/\\.][^/\\]{0,119}$")
+DOC_MAX_CHARS = 200_000
+EDITORS = ("web", "computer")
+
+
+def content_hash(text: str) -> str:
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
+
+
+# tcb 的 HTTP API 查询串无法承载换行等控制字符，内容一律 base64 存储
+def content_encode(text: str) -> str:
+    return base64.b64encode(text.encode("utf-8")).decode("ascii")
+
+
+def content_decode(b64: str) -> str:
+    return base64.b64decode(b64.encode("ascii")).decode("utf-8")
+
+
+WRITING_TOKEN_RE = re.compile(r"^[A-Za-z0-9\-]{4,64}$")
+
+
+async def writing_uid_from_token(token: str) -> str:
+    """令牌 → openid。畸形令牌或云端异常一律返回空串，绝不抛异常。"""
+    if not WRITING_TOKEN_RE.match(token or ""):
+        return ""
+    try:
+        q = f'db.collection("devices").where({{token:{json.dumps(token)}}}).limit(1).get()'
+        rows = (await writing_db("databasequery", q)).get("data", [])
+        return json.loads(rows[0]).get("_openid", "") if rows else ""
+    except RuntimeError as e:
+        print(f"[writing] 令牌校验失败: {e}")
+        return ""
+
+
+ACTIVE_MS_MAX_PER_REPORT = 30 * 60 * 1000  # 单次上报的写作时长上限，防异常值
+
+
+async def writing_prev_daily(uid: str, date_str: str):
+    """取该用户 date_str 之前最近一个写作日的 daily（当天首报时继承其收笔总数为基线）。"""
+    q = (f'db.collection("daily").where({{uid:{json.dumps(uid)}}})'
+         f'.orderBy("date","desc").limit(5).get()')
+    for r in (await writing_db("databasequery", q)).get("data", []):
+        doc = json.loads(r)
+        if doc.get("date", "") < date_str:  # ISO 日期字符串可直接比较
+            return doc
+    return None
+
+
+async def writing_update_progress(uid: str, date_str: str, now_ms: int, active_ms_add: int = 0) -> dict:
+    """按用户聚合全部 files 记录，更新当日进度。"""
+    all_q = f'db.collection("files").where({{uid:{json.dumps(uid)}}}).limit(1000).get()'
+    all_docs = [json.loads(r) for r in (await writing_db("databasequery", all_q)).get("data", [])]
+    merged = aggregate_file_docs(all_docs)
+    daily_id = f"{uid}:{date_str}"
+    existing = await writing_query_doc("daily", daily_id)
+    prev = None if existing is not None else await writing_prev_daily(uid, date_str)
+    daily = build_daily(uid, date_str, merged, existing, now_ms,
+                        active_ms_add=max(0, min(int(active_ms_add), ACTIVE_MS_MAX_PER_REPORT)),
+                        prev_daily=prev)
+    await writing_upsert("daily", daily_id, daily)
+    return daily
+
+
+async def writing_docs_of(uid: str, with_content: bool):
+    field = "" if with_content else '.field({name:true,updatedAt:true,editor:true,hash:true,cjk:true,en:true,readonly:true,marks:true})'
+    q = f'db.collection("docs").where({{uid:{json.dumps(uid)}}}).limit(1000){field}.get()'
+    return [json.loads(r) for r in (await writing_db("databasequery", q)).get("data", [])]
+
+
+class DocsListRequest(BaseModel):
+    token: str
+    date: str = ""  # 传入当天日期则一并返回当日进度（今日新增/写作时长）
+
+
+class DocsGetRequest(BaseModel):
+    token: str
+    name: str
+
+
+class DocsPutRequest(BaseModel):
+    token: str
+    name: str
+    content: str
+    editor: str
+    date: str
+    readonly: bool = False
+    baseUpdatedAt: Optional[int] = None
+    activeMs: int = 0  # 本次上报新增的实际写作时长（毫秒）
+
+
+class DocsChangesRequest(BaseModel):
+    token: str
+    since: int
+    names: list  # 本地磁盘当前存在的文件名，用于清理已删除文件
+    deletedNames: list = []  # 客户端确认「曾同步到磁盘、现已删除」的文件
+    date: str
+
+
 @app.post("/writing/docs/list")
 async def writing_docs_list(req: DocsListRequest):
     uid = await writing_uid_from_token(req.token)
@@ -351,6 +581,8 @@ async def writing_share_create(req: ShareCreateRequest):
     except RuntimeError as e:
         print(f"[writing] share/create 失败: {e}")
         return {"ok": False, "error": "服务器内部错误"}
+
+
 @app.post("/writing/share/book")
 async def writing_share_book(req: ShareGetRequest):
     """公开：凭分享码返回这本书的章节目录（仅书名+章节标题，不含正文）。"""
