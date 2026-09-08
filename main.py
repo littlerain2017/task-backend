@@ -1280,9 +1280,14 @@ async def writing_docs_put(req: DocsPutRequest):
             "hash": content_hash(req.content), "editor": req.editor,
             "readonly": req.readonly, "cjk": cjk, "en": en, "updatedAt": now_ms,
         })
+        # 配置类文档（_advisor.md / _conflicts.md 等）内容照存——顾问要读，
+        # 但字数记 0，不污染写作统计。写 0 而不是跳过，是为了让此前
+        # 已被计入的旧数据也归零。
+        counted = is_countable(req.name)
         await writing_upsert("files", f"{uid}:sync:{req.name}", {
             "uid": uid, "source": "sync", "name": req.name,
-            "cjk": cjk, "en": en, "updatedAt": now_ms,
+            "cjk": cjk if counted else 0, "en": en if counted else 0,
+            "updatedAt": now_ms,
         })
         daily = await writing_update_progress(uid, req.date, now_ms, active_ms_add=req.activeMs)
         return {"ok": True, "updatedAt": now_ms, "cjk": cjk, "en": en,
@@ -1651,8 +1656,13 @@ MOONSHOT_MODEL = os.environ.get("MOONSHOT_MODEL", "kimi-k3")
 MOONSHOT_BASE_URL = os.environ.get("MOONSHOT_BASE_URL", "https://api.moonshot.cn/v1").rstrip("/")
 MOONSHOT_URL = f"{MOONSHOT_BASE_URL}/chat/completions"
 
+def is_countable(name: str) -> bool:
+    """文件名以 _ 开头的是配置/AI 产物，存内容但不计写作字数。"""
+    return not name.rsplit("/", 1)[-1].startswith("_")
+
+
 CANON_PREFIX = "00_"        # 每本书的世界观权威：书内第一个 00_ 开头的文档
-CONFLICT_PREFIX = "07_"     # 每本书的冲突清单：书内第一个 07_ 开头的文档
+CONFLICT_PREFIX = "_conflicts"  # 每本书的冲突清单：书内 _conflicts.md
 PERSONA_DOC = "_advisor.md" # 可选：书内专属顾问人格，存在则覆盖默认
 
 class ScifiAdvisorRequest(BaseModel):

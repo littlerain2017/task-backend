@@ -33,6 +33,17 @@ HTTP_TIMEOUT = 20
 SYNC_EXTENSIONS = (".md", ".txt")      # 双向同步
 READONLY_EXTENSIONS = (".docx",)       # 只上行（网页只读）
 
+# 完全不同步的东西：归档、工具目录、Agent 配置文件。服务端用不到它们。
+# 注意只看**目录**前缀——根目录下的 _advisor.md / _conflicts.md 仍需同步给顾问，
+# 它们不计字数是由后端负责的（见 main.py NO_COUNT）。
+SKIP_NAMES = {"CLAUDE.md", "AGENTS.md", "README.md"}
+
+
+def is_skipped(rel):
+    if rel.name in SKIP_NAMES:
+        return True
+    return any(part.startswith("_") for part in rel.parts[:-1])
+
 XML_TAG_RE = re.compile(r"<[^>]+>")
 
 
@@ -140,6 +151,8 @@ def scan(dirs):
             rel = p.relative_to(watch_dir)
             if any(part.startswith(".") for part in rel.parts):
                 continue  # 跳过隐藏目录（如 .vscode）
+            if is_skipped(rel):
+                continue  # 跳过配置/AI 产物/归档/工具，不计字数
             if ext in SYNC_EXTENSIONS:
                 readonly = False
             elif ext in READONLY_EXTENSIONS:
