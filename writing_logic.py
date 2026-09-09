@@ -5,9 +5,19 @@ CJK_RE = re.compile(r"[一-鿿]")
 EN_WORD_RE = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
 
 
+# 作者批注：正文里形如 <!-- 批注 2026-09-10 14:32 | ... --> 的整行，不计字数。
+# 前端 stripNotes() 用的是同一套规则，两边口径必须一致。
+NOTE_LINE_RE = re.compile(r"^[ \t]*<!--\s*批注\s.*?-->[ \t]*$", re.MULTILINE)
+
+
+def strip_notes(text):
+    return NOTE_LINE_RE.sub("", text)
+
+
 def count_text(text):
-    """返回 (中文字符数, 英文单词数)，与各客户端口径一致。"""
-    return len(CJK_RE.findall(text)), len(EN_WORD_RE.findall(text))
+    """返回 (中文字符数, 英文单词数)，与各客户端口径一致。批注不计入。"""
+    t = strip_notes(text)
+    return len(CJK_RE.findall(t)), len(EN_WORD_RE.findall(t))
 
 
 def build_daily(uid, date_id, counts, existing_daily, now_ms, active_ms_add=0, prev_daily=None):

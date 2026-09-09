@@ -359,8 +359,7 @@ async def writing_docs_get(req: DocsGetRequest):
         highlights = json.loads(content_decode(hb)) if hb else []
         return {"ok": True, "content": content_decode(doc.get("contentB64", "")),
                 "updatedAt": doc.get("updatedAt", 0), "readonly": doc.get("readonly", False),
-                "marks": doc.get("marks", []), "notes": doc.get("notes", []),
-                "highlights": highlights}
+                "marks": doc.get("marks", []), "highlights": highlights}
     except RuntimeError as e:
         print(f"[writing] docs/get 失败: {e}")
         return {"ok": False, "error": "服务器内部错误"}
@@ -419,12 +418,6 @@ class DocsMarksRequest(BaseModel):
     marks: list  # 被标记段落的原文列表
 
 
-class DocsNotesRequest(BaseModel):
-    token: str
-    name: str
-    notes: list  # [{para, text, at}]，para 为被批注段落的原文
-
-
 class DocsHighlightsRequest(BaseModel):
     token: str
     name: str
@@ -472,43 +465,6 @@ async def writing_docs_marks(req: DocsMarksRequest):
         return {"ok": True, "count": len(marks)}
     except RuntimeError as e:
         print(f"[writing] docs/marks 失败: {e}")
-        return {"ok": False, "error": "服务器内部错误"}
-
-
-@app.post("/writing/docs/notes")
-async def writing_docs_notes(req: DocsNotesRequest):
-    """保存作者自己的段落批注（以段落文字为键，跨设备同步）。
-
-    与朋友的留言（comments 集合）分开存：留言是别人写的、只读；
-    批注是作者写的、可增删。两者都不进正文，不计字数。
-    """
-    if not isinstance(req.notes, list) or len(req.notes) > 200:
-        return {"ok": False, "error": "批注最多 200 条"}
-    notes = []
-    for n in req.notes:
-        if not isinstance(n, dict):
-            continue
-        para, text = n.get("para"), n.get("text")
-        if not isinstance(para, str) or not isinstance(text, str):
-            continue
-        if not (0 < len(para) <= 500) or not (0 < len(text) <= 2000):
-            continue
-        at = n.get("at")
-        notes.append({"para": para, "text": text,
-                      "at": at if isinstance(at, int) else 0})
-    uid = await writing_uid_from_token(req.token)
-    if not uid:
-        return {"ok": False, "error": "无效令牌"}
-    try:
-        doc_id = f"{uid}:{req.name}"
-        if await writing_query_doc("docs", doc_id) is None:
-            return {"ok": False, "error": "文件不存在"}
-        q = (f'db.collection("docs").where({{_id:{json.dumps(doc_id)}}})'
-             f'.update({{data:{{notes:{json.dumps(notes, ensure_ascii=False)}}}}})')
-        await writing_db("databaseupdate", q)
-        return {"ok": True, "count": len(notes)}
-    except RuntimeError as e:
-        print(f"[writing] docs/notes 失败: {e}")
         return {"ok": False, "error": "服务器内部错误"}
 
 
