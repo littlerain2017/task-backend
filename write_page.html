@@ -802,7 +802,7 @@
         <button class="btn" id="modeBtn" onclick="toggleScriptMode()" title="剧本模式（Final Draft 格式）">剧本</button>
         <button class="btn" onclick="newDoc()">新建</button>
         <button class="btn" onclick="copyDoc()">复制</button>
-        <button class="btn" onclick="addNote()" title="给当前段落写一条批注（⌘⇧N）">批注</button>
+        <button class="btn" onclick="addNote()" title="给当前段落写一条批注（⌘/）">批注</button>
         <button class="btn" onclick="toggleMark()" title="标记/取消标记当前段落（⌘M），⌘⇧M 跳转书签">标记</button>
         <button class="btn" onclick="toggleMarksPanel()" title="查看全部书签">书签</button>
         <button class="btn" id="advisorBtn" onclick="toggleAdvisor()" title="科幻顾问：问设定 / 查冲突">顾问</button>
@@ -971,7 +971,9 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     if (e.shiftKey) jumpNextMark();  // ⌘⇧M 在书签间跳转
     else toggleMark();               // ⌘M 标记/取消当前段落
-  } else if (key === "n" && e.shiftKey) {
+  } else if (e.code === "Slash" && !e.shiftKey) {
+    // ⌘/ 加批注。原本用 ⌘⇧N，但 macOS 上 Chrome/Safari 都拿它开无痕窗口，
+    // 浏览器级快捷键在页面收到 keydown 之前就被吃掉，preventDefault 拦不住。
     e.preventDefault();
     addNote();
   } else if (e.shiftKey && (e.code === "Comma" || e.code === "Period")) {
