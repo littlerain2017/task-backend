@@ -257,6 +257,19 @@
   #editor .inline-note.mine .in-head { color: var(--gold); }
   #editor .inline-note.mine .in-text { color: var(--ink-soft); }
   #editor .inline-note.mine .in-del:hover { color: var(--gold-bright); }
+  #editor .inline-note.mine .in-text {
+    cursor: text;
+    outline: none;
+    min-height: 1.4em;
+    border-radius: 3px;
+  }
+  #editor .inline-note.mine .in-text:focus {
+    box-shadow: 0 0 0 2px var(--gold-line);
+  }
+  #editor .inline-note.mine .in-text:empty::before {
+    content: "写点什么…";
+    color: var(--muted);
+  }
 
   /* 彩色高亮：选中文字上色，用于区分修改/待办等 */
   #editor .hl { border-radius: 2px; padding: 0 1px; }
@@ -1721,22 +1734,65 @@ function renderNotes() {
   });
 }
 
+let noteSaveTimer = null;
+
+function dropNote(n) {
+  current.notes = (current.notes || []).filter((x) => !(x.para === n.para && x.at === n.at));
+}
+
 function buildMyNote(n) {
   const div = document.createElement("div");
   div.className = "inline-note mine";
-  div.contentEditable = "false";
+  div.contentEditable = "false";          // 外壳不可编辑，只有 .in-text 是编辑岛
+  div.dataset.at = n.at;
   const d = new Date(n.at || Date.now());
   const p = (x) => String(x).padStart(2, "0");
   div.innerHTML = `<span class="in-head">批注 · ${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}</span>
     <span class="in-del" title="删除这条批注">×</span>
     <div class="in-text"></div>`;
-  div.querySelector(".in-text").textContent = n.text;
+
+  const txt = div.querySelector(".in-text");
+  txt.textContent = n.text;
+  txt.contentEditable = "true";
+
+  // 批注里的输入不能走正文那条流水线：renderNotes 会重建 DOM，正在打的字和
+  // 光标都会没。stopPropagation 让编辑器的 input 处理器完全不触发。
+  txt.addEventListener("input", (e) => {
+    e.stopPropagation();
+    n.text = txt.innerText;
+    clearTimeout(noteSaveTimer);
+    noteSaveTimer = setTimeout(persistNotes, 700);
+  });
+  txt.addEventListener("blur", () => {
+    clearTimeout(noteSaveTimer);
+    n.text = txt.innerText.trim();
+    if (!n.text) { dropNote(n); div.remove(); }   // 空批注不留
+    persistNotes();
+  });
+  txt.addEventListener("keydown", (e) => {
+    e.stopPropagation();                          // 别让 ⌘/ ⌘M 之类在批注里触发
+    if (e.key === "Escape") txt.blur();
+  });
+
   div.querySelector(".in-del").onclick = () => {
-    current.notes = (current.notes || []).filter((x) => !(x.para === n.para && x.at === n.at));
+    clearTimeout(noteSaveTimer);
+    dropNote(n);
     div.remove();
     persistNotes();
   };
   return div;
+}
+
+function focusNote(at) {
+  const el = document.querySelector(`.inline-note.mine[data-at="${at}"] .in-text`);
+  if (!el) return;
+  el.focus();
+  const r = document.createRange();
+  r.selectNodeContents(el);
+  r.collapse(false);
+  const sel = document.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(r);
 }
 
 function addNote() {
@@ -1745,12 +1801,10 @@ function addNote() {
   const block = caretBlock();
   const para = block ? block.textContent.trim() : "";
   if (!para) { setSync("先把光标放到要批注的段落里", ""); return; }
-  const text = (window.prompt("写给自己的批注：") || "").trim();
-  if (!text) return;
-  current.notes = (current.notes || []).concat([{ para, text, at: Date.now() }]);
+  const note = { para, text: "", at: Date.now() };
+  current.notes = (current.notes || []).concat([note]);
   renderNotes();
-  persistNotes();
-  setSync("已加批注", "ok");
+  focusNote(note.at);          // 直接落笔，写完点别处或按 Esc 即保存；留空则自动丢弃
 }
 
 function persistNotes() {
@@ -2005,7 +2059,10 @@ async function saveToken() {
 }
 
 async function refresh() {
-  if (!token || dirty) return;
+  // 正在写批注时不要后台重载：批注编辑不置 dirty，重载会重建 DOM 冲掉没存完的字
+  const inNote = document.activeElement && document.activeElement.closest &&
+                 document.activeElement.closest(".inline-note");
+  if (!token || dirty || inNote) return;
   try {
     await loadList();
     if (current) {
