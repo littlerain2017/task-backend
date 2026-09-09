@@ -1200,6 +1200,7 @@ function toggleScriptMode() {
   localStorage.setItem("writing_script_modes", JSON.stringify(scriptModes));
   applyMode();
   reclassify();
+  applyMarks();      // reclassify 会覆写 className，marked 类要重新贴回来
   renderCounts();
 }
 
