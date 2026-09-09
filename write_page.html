@@ -249,6 +249,15 @@
   }
   #editor .inline-note .in-del:hover { color: var(--note); }
 
+  /* 作者自己的批注：鎏金，与朋友留言（冷蓝）区分开 */
+  #editor .inline-note.mine {
+    border-left-color: var(--gold);
+    background: rgba(211, 178, 92, 0.08);
+  }
+  #editor .inline-note.mine .in-head { color: var(--gold); }
+  #editor .inline-note.mine .in-text { color: var(--ink-soft); }
+  #editor .inline-note.mine .in-del:hover { color: var(--gold-bright); }
+
   /* 彩色高亮：选中文字上色，用于区分修改/待办等 */
   #editor .hl { border-radius: 2px; padding: 0 1px; }
   #editor .hl-red    { color: #e6897a; }
@@ -793,6 +802,7 @@
         <button class="btn" id="modeBtn" onclick="toggleScriptMode()" title="剧本模式（Final Draft 格式）">剧本</button>
         <button class="btn" onclick="newDoc()">新建</button>
         <button class="btn" onclick="copyDoc()">复制</button>
+        <button class="btn" onclick="addNote()" title="给当前段落写一条批注（⌘⇧N）">批注</button>
         <button class="btn" onclick="toggleMark()" title="标记/取消标记当前段落（⌘M），⌘⇧M 跳转书签">标记</button>
         <button class="btn" onclick="toggleMarksPanel()" title="查看全部书签">书签</button>
         <button class="btn" id="advisorBtn" onclick="toggleAdvisor()" title="科幻顾问：问设定 / 查冲突">顾问</button>
@@ -961,6 +971,9 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     if (e.shiftKey) jumpNextMark();  // ⌘⇧M 在书签间跳转
     else toggleMark();               // ⌘M 标记/取消当前段落
+  } else if (key === "n" && e.shiftKey) {
+    e.preventDefault();
+    addNote();
   } else if (e.shiftKey && (e.code === "Comma" || e.code === "Period")) {
     // ⌘⇧< / ⌘⇧> 翻章。用 code 而非 key，不受键盘布局影响；
     // 不用方向键是因为 ⌘←/→ 在正文里是移动光标，写作时会打架。
@@ -1201,6 +1214,7 @@ function toggleScriptMode() {
   applyMode();
   reclassify();
   applyMarks();      // reclassify 会覆写 className，marked 类要重新贴回来
+  renderNotes();
   renderCounts();
 }
 
@@ -1667,7 +1681,8 @@ async function openDoc(name) {
     return;
   }
   current = { name, updatedAt: data.updatedAt, readonly: data.readonly,
-              marks: data.marks || [], highlights: data.highlights || [] };
+              marks: data.marks || [], notes: data.notes || [],
+              highlights: data.highlights || [] };
   currentBook = bookOf(name);
   localStorage.setItem("writing_book", currentBook);
   localStorage.setItem("writing_last_doc", name);
@@ -1685,8 +1700,60 @@ async function openDoc(name) {
   if (pruneHighlights()) { renderHighlights(); persistHighlights(); }  // 清理已被改动的段落上的失效高亮
   renderCounts();
   renderSelect();
+  renderNotes();
   setSync(data.readonly ? "只读（Word 文档请在电脑上编辑）" : "已就绪", "ok");
   loadComments(name);
+}
+
+/* ===== 作者自己的批注（鎏金，锚定在段落原文上，不进正文、不计字数） ===== */
+function renderNotes() {
+  if (!current) return;
+  document.querySelectorAll(".inline-note.mine").forEach((n) => n.remove());
+  const byPara = {};
+  (current.notes || []).forEach((n) => (byPara[n.para] = byPara[n.para] || []).push(n));
+  Array.prototype.slice.call(editor.childNodes).forEach((node) => {
+    if (node.nodeType !== Node.ELEMENT_NODE || isNote(node)) return;
+    const list = byPara[node.textContent.trim()];
+    if (!list) return;
+    list.forEach((n) => node.after(buildMyNote(n)));
+  });
+}
+
+function buildMyNote(n) {
+  const div = document.createElement("div");
+  div.className = "inline-note mine";
+  div.contentEditable = "false";
+  const d = new Date(n.at || Date.now());
+  const p = (x) => String(x).padStart(2, "0");
+  div.innerHTML = `<span class="in-head">批注 · ${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}</span>
+    <span class="in-del" title="删除这条批注">×</span>
+    <div class="in-text"></div>`;
+  div.querySelector(".in-text").textContent = n.text;
+  div.querySelector(".in-del").onclick = () => {
+    current.notes = (current.notes || []).filter((x) => !(x.para === n.para && x.at === n.at));
+    div.remove();
+    persistNotes();
+  };
+  return div;
+}
+
+function addNote() {
+  if (!current) return;
+  if (current.readonly) { setSync("只读文件不能加批注", "err"); return; }
+  const block = caretBlock();
+  const para = block ? block.textContent.trim() : "";
+  if (!para) { setSync("先把光标放到要批注的段落里", ""); return; }
+  const text = (window.prompt("写给自己的批注：") || "").trim();
+  if (!text) return;
+  current.notes = (current.notes || []).concat([{ para, text, at: Date.now() }]);
+  renderNotes();
+  persistNotes();
+  setSync("已加批注", "ok");
+}
+
+function persistNotes() {
+  api("/writing/docs/notes", { name: current.name, notes: current.notes || [] })
+    .catch(() => setSync("批注保存失败，稍后自动重试", "err"));
 }
 
 /* ===== 朋友的留言（编辑器内联展示，冷蓝色，作者可删） ===== */
@@ -1852,6 +1919,7 @@ editor.addEventListener("input", () => {
   rememberEditPos();
   reclassify();
   applyMarks();
+  renderNotes();
   renderCounts();
   setSync("编辑中…", "busy");
   clearTimeout(saveTimer);
