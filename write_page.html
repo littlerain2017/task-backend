@@ -1917,27 +1917,46 @@ function renderHighlights() {
 }
 
 // 从当前选区解析出 {block, para, start, len}；跨段或无选区返回 null
-function selectionSpan() {
+/** 选区拆成「每段一条」。跨段选中时返回多条——高亮按段落原文锚定，
+    一条记录只能描述一个段落内的区间，所以跨段必须切开存。 */
+function selectionSpans() {
   const sel = document.getSelection();
-  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return [];
   const range = sel.getRangeAt(0);
   const blockOf = (n) => { while (n && n.parentNode !== editor) n = n.parentNode; return n; };
-  const block = blockOf(range.startContainer);
-  const block2 = blockOf(range.endContainer);
-  if (!block || block !== block2 || isNote(block)) return null;
-  const pre = document.createRange();
-  pre.selectNodeContents(block);
-  pre.setEnd(range.startContainer, range.startOffset);
-  const start = pre.toString().length;
-  const len = range.toString().length;
-  if (len <= 0) return null;
-  return { block, para: block.textContent, start, len };
+  const first = blockOf(range.startContainer);
+  const last = blockOf(range.endContainer);
+  if (!first || !last) return [];
+
+  const out = [];
+  for (const block of editor.children) {
+    if (isNote(block) || !range.intersectsNode(block)) continue;
+    const text = block.textContent;
+    if (!text) continue;
+    // 该段落与选区的交集：首段从选区起点开始，末段到选区终点为止，中间整段
+    let start = 0, end = text.length;
+    if (block === first) {
+      const pre = document.createRange();
+      pre.selectNodeContents(block);
+      pre.setEnd(range.startContainer, range.startOffset);
+      start = pre.toString().length;
+    }
+    if (block === last) {
+      const pre = document.createRange();
+      pre.selectNodeContents(block);
+      pre.setEnd(range.endContainer, range.endOffset);
+      end = pre.toString().length;
+    }
+    if (end > start) out.push({ block, para: text, start, len: end - start });
+  }
+  return out;
 }
 
 function showPalette() {
-  const span = selectionSpan();
   const pal = $("hlPalette");
-  if (!span || editor.contentEditable === "false") { pal.classList.remove("open"); return; }
+  if (selectionSpans().length === 0 || editor.contentEditable === "false") {
+    pal.classList.remove("open"); return;
+  }
   const rect = document.getSelection().getRangeAt(0).getBoundingClientRect();
   pal.style.left = (rect.left + rect.width / 2) + "px";
   pal.style.top = (rect.top - 8) + "px";
@@ -1950,26 +1969,30 @@ function persistHighlights() {
 }
 
 function applyHighlight(color) {
-  const span = selectionSpan();
+  const spans = selectionSpans();
   $("hlPalette").classList.remove("open");
-  if (!span || !current) return;
+  if (spans.length === 0 || !current) return;
   current.highlights = current.highlights || [];
-  if (color === "clear") {
-    // 移除与选区重叠的、同段高亮
+
+  spans.forEach((span) => {
     const a = span.start, b = span.start + span.len;
-    current.highlights = current.highlights.filter((h) =>
-      !(h.para === span.para && h.start < b && h.start + h.len > a));
-  } else {
-    // 先去掉同段完全被覆盖的旧高亮，再加新的
-    const a = span.start, b = span.start + span.len;
-    current.highlights = current.highlights.filter((h) =>
-      !(h.para === span.para && h.start >= a && h.start + h.len <= b));
-    current.highlights.push({ para: span.para, start: span.start, len: span.len, color });
-  }
+    if (color === "clear") {
+      // 移除与选区重叠的、同段高亮
+      current.highlights = current.highlights.filter((h) =>
+        !(h.para === span.para && h.start < b && h.start + h.len > a));
+    } else {
+      // 先去掉同段完全被覆盖的旧高亮，再加新的
+      current.highlights = current.highlights.filter((h) =>
+        !(h.para === span.para && h.start >= a && h.start + h.len <= b));
+      current.highlights.push({ para: span.para, start: span.start, len: span.len, color });
+    }
+  });
+
   document.getSelection().removeAllRanges();
   renderHighlights();
   persistHighlights();
-  setSync(color === "clear" ? "已清除高亮" : "已高亮", "ok");
+  const n = spans.length > 1 ? `${spans.length} 段` : "";
+  setSync(color === "clear" ? `已清除高亮${n}` : `已高亮${n}`, "ok");
 }
 
 // 编辑后清理锚定失效（段落被改动）的高亮
