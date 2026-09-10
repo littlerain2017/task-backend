@@ -174,9 +174,9 @@
   #editor {
     width: 100%;
     max-width: var(--measure, 760px);
-    padding: 48px 24px 45vh;
+    padding: 48px var(--side, 7ch) 45vh;
     font-size: var(--font-size, 19px);
-    line-height: 2.05;
+    line-height: var(--leading, 2.05);
     letter-spacing: var(--tracking, 0.05em);
     color: var(--ink);
     caret-color: var(--gold);
@@ -184,7 +184,7 @@
     text-wrap: pretty;
     word-break: break-word;
   }
-  #editor .line { margin: 0 0 1.6em; text-indent: 2em; transition: opacity 0.45s ease; }
+  #editor .line { margin: 0 0 var(--para-gap, 1.1em); text-indent: 0; transition: opacity 0.45s ease; }
   #editor .line.h1 {
     font-size: 1.35em;
     font-weight: 600;
@@ -206,7 +206,7 @@
     letter-spacing: 0.5em;
     margin: 2.2em 0;
   }
-  #editor .line.blank { margin: 0 0 1.6em; text-indent: 0; }
+  #editor .line.blank { margin: 0 0 var(--para-gap, 1.1em); text-indent: 0; }
   #editor.focus-on .line.dim { opacity: 0.28; }
   #editor[contenteditable="false"] { color: var(--muted); }
 
@@ -310,7 +310,7 @@
     letter-spacing: 0;
     width: min(74ch, calc(100vw - 24px));
     max-width: none;
-    padding: calc(var(--sc-lh) * 2) 0 45vh;
+    padding: calc(var(--sc-lh) * 2) 0 45vh;   /* 横向留白由 .line 的 8ch 负责，不叠加 --side */
     text-wrap: initial;
   }
   /* 分页线：每 55 行一页（一页一分钟） */
@@ -901,6 +901,18 @@
       <span class="row-title">字距 <span id="trackingVal">0.05</span>em</span>
       <input type="range" min="0" max="0.12" step="0.01" id="trackingRange" oninput="setPref('tracking', +this.value)">
     </div>
+    <div class="row">
+      <span class="row-title">行距 <span id="leadingVal">2.05</span></span>
+      <input type="range" min="1.4" max="2.6" step="0.05" id="leadingRange" oninput="setPref('leading', +this.value)">
+    </div>
+    <div class="row">
+      <span class="row-title">段距 <span id="paraGapVal">1.10</span>em</span>
+      <input type="range" min="0" max="2.4" step="0.1" id="paraGapRange" oninput="setPref('paraGap', +this.value)">
+    </div>
+    <div class="row">
+      <span class="row-title">两侧留白 <span id="sideVal">7</span>ch</span>
+      <input type="range" min="0" max="14" step="1" id="sideRange" oninput="setPref('side', +this.value)">
+    </div>
     <div class="switch">
       <span>专注模式</span>
       <input type="checkbox" id="focusToggle" onchange="setPref('focus', this.checked)" style="accent-color: var(--gold);">
@@ -931,7 +943,8 @@ let serverActiveMs = 0;
 let pendingActiveMs = Number(localStorage.getItem("writing_pending_active") || 0);
 let lastKeyTs = 0;
 let prefs = Object.assign(
-  { tone: "暖黑", fontSize: 19, measure: 760, tracking: 0.05, focus: true },
+  { tone: "暖黑", fontSize: 19, measure: 760, tracking: 0.05,
+    leading: 2.05, paraGap: 1.1, side: 7, focus: true },
   JSON.parse(localStorage.getItem("writing_prefs") || "{}")
 );
 
@@ -948,14 +961,23 @@ function applyPrefs() {
   r.setProperty("--font-size", prefs.fontSize + "px");
   r.setProperty("--measure", prefs.measure + "px");
   r.setProperty("--tracking", prefs.tracking + "em");
+  r.setProperty("--leading", prefs.leading);
+  r.setProperty("--para-gap", prefs.paraGap + "em");
+  r.setProperty("--side", prefs.side + "ch");
   editor.classList.toggle("focus-on", prefs.focus);
   if (!prefs.focus) editor.querySelectorAll(".line.dim").forEach((n) => n.classList.remove("dim"));
   $("fontSizeVal").textContent = prefs.fontSize;
   $("measureVal").textContent = prefs.measure;
   $("trackingVal").textContent = prefs.tracking.toFixed(2);
+  $("leadingVal").textContent = prefs.leading.toFixed(2);
+  $("paraGapVal").textContent = prefs.paraGap.toFixed(2);
+  $("sideVal").textContent = prefs.side;
   $("fontSizeRange").value = prefs.fontSize;
   $("measureRange").value = prefs.measure;
   $("trackingRange").value = prefs.tracking;
+  $("leadingRange").value = prefs.leading;
+  $("paraGapRange").value = prefs.paraGap;
+  $("sideRange").value = prefs.side;
   $("focusToggle").checked = prefs.focus;
   document.querySelectorAll(".tone").forEach((el) =>
     el.classList.toggle("active", el.dataset.tone === prefs.tone));
