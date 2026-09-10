@@ -845,10 +845,13 @@ async def moonshot_chat(system: str, user: str, max_tokens: int = 2000) -> str:
     if resp.status_code != 200:
         raise RuntimeError(f"Kimi 返回 {resp.status_code}: {resp.text[:200]}")
 
-    data = resp.json()
-    choices = data.get("choices") or []
+    payload = resp.json()
+    # 中转站有时把 OpenAI 标准响应多包一层 data，两种都认。
+    if isinstance(payload.get("data"), dict) and "choices" in payload["data"]:
+        payload = payload["data"]
+    choices = payload.get("choices") or []
     if not choices:
-        raise RuntimeError(f"Kimi 响应异常: {str(data)[:200]}")
+        raise RuntimeError(f"Kimi 响应异常: {str(payload)[:200]}")
     return choices[0].get("message", {}).get("content", "").strip()
 
 
