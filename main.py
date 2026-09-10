@@ -158,19 +158,14 @@ import base64
 import hashlib
 import secrets
 from typing import Optional
-from writing_logic import aggregate_file_docs, build_daily, count_text, normalize_files
+from writing_logic import aggregate_file_docs, build_daily, count_text
 
 WRITING_APPID = os.environ.get("WRITING_APPID", "wxff2f10ce15321b4a")
 WRITING_APPSECRET = os.environ.get("WRITING_APPSECRET", "af1333432c29946412e52b37c805d836")
 WRITING_ENV = os.environ.get("WRITING_ENV", "cloud1-d8gpsjp7i273e1044")
-WRITING_MIN_INTERVAL_SECONDS = 3  # 同一令牌两次上报的最小间隔
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 _writing_token = {"value": "", "expires_at": 0.0}
-_writing_last_report_at = {}
-
-
-SOURCE_RE = re.compile(r"^[a-z]{1,20}$")
 
 
 async def writing_access_token() -> str:
@@ -359,10 +354,7 @@ async def writing_docs_get(req: DocsGetRequest):
         highlights = json.loads(content_decode(hb)) if hb else []
         return {"ok": True, "content": content_decode(doc.get("contentB64", "")),
                 "updatedAt": doc.get("updatedAt", 0), "readonly": doc.get("readonly", False),
-                "marks": doc.get("marks", []), "highlights": highlights,
-                # 旧架构遗留：批注曾存在这个字段里，现已改为写进正文的 HTML 注释。
-                # 保留读取路径，供迁移与兜底；迁移完成的文档此字段为空。
-                "legacyNotes": doc.get("notes", [])}
+                "marks": doc.get("marks", []), "highlights": highlights}
     except RuntimeError as e:
         print(f"[writing] docs/get 失败: {e}")
         return {"ok": False, "error": "服务器内部错误"}
