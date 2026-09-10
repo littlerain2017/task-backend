@@ -1831,7 +1831,9 @@ function addNote() {
 
 /* ===== 朋友的留言（编辑器内联展示，冷蓝色，作者可删） ===== */
 async function loadComments(name) {
-  document.querySelectorAll(".inline-note").forEach((n) => n.remove());
+  // 只清朋友的留言。作者批注（.mine）由 setEditorContent 从正文解析而来，
+  // 这里一并删掉的话，每次打开文档批注都会刚渲染出来就被抹掉。
+  document.querySelectorAll(".inline-note:not(.mine)").forEach((n) => n.remove());
   try {
     const data = await api("/writing/comments/mine", { name });
     if (!data.ok || !data.comments.length) return;
