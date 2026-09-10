@@ -230,7 +230,7 @@
   #editor.focus-on .line.marked.dim { opacity: 0.55; }  /* 专注模式下书签段落也别太暗 */
 
   /* 朋友的留言：编辑器内联、冷蓝色 */
-  #editor .inline-note {
+  #editor .note {
     position: relative;
     margin: 6px 0 1.2em;
     padding: 8px 30px 8px 12px;
@@ -241,32 +241,32 @@
     font-size: 0.82em;
     line-height: 1.65;
   }
-  #editor .inline-note .in-head { color: var(--note); font-size: 0.85em; letter-spacing: 0.04em; }
-  #editor .inline-note .in-text { color: #cfe0e9; white-space: pre-wrap; margin-top: 3px; }
-  #editor .inline-note .in-del {
+  #editor .note .in-head { color: var(--note); font-size: 0.85em; letter-spacing: 0.04em; }
+  #editor .note .in-text { color: #cfe0e9; white-space: pre-wrap; margin-top: 3px; }
+  #editor .note .in-del {
     position: absolute; right: 10px; top: 8px; color: var(--muted);
     cursor: pointer; font-size: 14px; line-height: 1;
   }
-  #editor .inline-note .in-del:hover { color: var(--note); }
+  #editor .note .in-del:hover { color: var(--note); }
 
   /* 作者自己的批注：鎏金，与朋友留言（冷蓝）区分开 */
-  #editor .inline-note.mine {
+  #editor .note.my-note {
     border-left-color: var(--gold);
     background: rgba(211, 178, 92, 0.08);
   }
-  #editor .inline-note.mine .in-head { color: var(--gold); }
-  #editor .inline-note.mine .in-text { color: var(--ink-soft); }
-  #editor .inline-note.mine .in-del:hover { color: var(--gold-bright); }
-  #editor .inline-note.mine .in-text {
+  #editor .note.my-note .in-head { color: var(--gold); }
+  #editor .note.my-note .in-text { color: var(--ink-soft); }
+  #editor .note.my-note .in-del:hover { color: var(--gold-bright); }
+  #editor .note.my-note .in-text {
     cursor: text;
     outline: none;
     min-height: 1.4em;
     border-radius: 3px;
   }
-  #editor .inline-note.mine .in-text:focus {
+  #editor .note.my-note .in-text:focus {
     box-shadow: 0 0 0 2px var(--gold-line);
   }
-  #editor .inline-note.mine .in-text:empty::before {
+  #editor .note.my-note .in-text:empty::before {
     content: "写点什么…";
     color: var(--muted);
   }
@@ -1292,7 +1292,7 @@ const SCRIPT_PAGE_PX = SCRIPT_LINE_PX * LINES_PER_PAGE; // 一页 = 55 行的实
 function updatePageInfo() {
   const gridTop = SCRIPT_LINE_PX * 2;  // 分页线起点（对应顶部留白）
   // 批注不是剧本内容，量高度前先藏起来，否则会把页数撑大
-  const notes = editor.querySelectorAll(".inline-note");
+  const notes = editor.querySelectorAll(".note");
   notes.forEach((n) => (n.style.display = "none"));
   let bottom = gridTop;
   editor.childNodes.forEach((node) => {
@@ -1358,7 +1358,7 @@ function noteStamp(d) {
 }
 
 function isNote(node) {
-  return node.nodeType === Node.ELEMENT_NODE && node.classList.contains("inline-note");
+  return node.nodeType === Node.ELEMENT_NODE && node.classList.contains("note");
 }
 
 function getEditorContent() {
@@ -1366,7 +1366,7 @@ function getEditorContent() {
   editor.childNodes.forEach((node) => {
     if (isNote(node)) {
       // 自己的批注写进文件（HTML 注释）；朋友的留言不属于稿件，跳过
-      if (node.classList.contains("mine")) {
+      if (node.classList.contains("my-note")) {
         const t = node.querySelector(".in-text");
         const body = t ? t.innerText.trim() : "";
         if (body) lines.push(noteLine(node.dataset.stamp || "", body));
@@ -1424,6 +1424,18 @@ editor.addEventListener("blur", () =>
   editor.querySelectorAll(".line.dim").forEach((n) => n.classList.remove("dim")));
 
 /* ===== 字数 / 状态 ===== */
+/* ===== 批注完整性护栏 =====
+   正文的唯一真源是 DOM（getEditorContent 从 DOM 序列化）。这意味着任何让
+   节点从 DOM 消失的显示 bug，都会在下一次保存时变成**数据删除**——这个系统
+   里没有纯粹的显示 bug。2026-09-10 就是这样丢了三条批注。
+   这道闸不针对某一个 bug，它拦的是同一类还没发生的 bug：
+   保存前数一遍批注，比上次落盘时少了、又抵不掉用户主动删除的次数，就中止。 */
+let noteDeletes = 0;   // 用户主动删掉的批注数，save 时抵扣，成功后清零
+
+function countNotes(text) {
+  return text.split("\n").filter((l) => NOTE_RE.test(l)).length;
+}
+
 function stripNotes(text) {
   return text.split("\n").filter((l) => !NOTE_RE.test(l)).join("\n");
 }
@@ -1757,7 +1769,9 @@ async function openDoc(name) {
     return;
   }
   current = { name, updatedAt: data.updatedAt, readonly: data.readonly,
-              marks: data.marks || [], highlights: data.highlights || [] };
+              baseContent: data.content, marks: data.marks || [],
+              highlights: data.highlights || [] };
+  noteDeletes = 0;
   currentBook = bookOf(name);
   localStorage.setItem("writing_book", currentBook);
   localStorage.setItem("writing_last_doc", name);
@@ -1782,7 +1796,7 @@ async function openDoc(name) {
 /* ===== 作者自己的批注（鎏金，写进正文的 HTML 注释里；位置即锚点） ===== */
 function buildMyNote(stamp, text) {
   const div = document.createElement("div");
-  div.className = "inline-note mine";
+  div.className = "note my-note";
   div.contentEditable = "false";          // 外壳不可编辑，只有 .in-text 是编辑岛
   div.dataset.stamp = stamp || noteStamp(new Date());
   div.innerHTML = `<span class="in-head">批注 · ${escapeHtml(div.dataset.stamp)}</span>
@@ -1801,6 +1815,7 @@ function buildMyNote(stamp, text) {
   });
   txt.addEventListener("blur", () => {
     if (!txt.innerText.trim()) {          // 空批注不留
+      if (text) noteDeletes++;            // 原本有内容，算一次主动删除
       div.remove();
       dirty = true;
       save();
@@ -1808,6 +1823,7 @@ function buildMyNote(stamp, text) {
   });
 
   div.querySelector(".in-del").onclick = () => {
+    noteDeletes++;
     div.remove();
     dirty = true;
     renderCounts();
@@ -1831,9 +1847,10 @@ function addNote() {
 
 /* ===== 朋友的留言（编辑器内联展示，冷蓝色，作者可删） ===== */
 async function loadComments(name) {
-  // 只清朋友的留言。作者批注（.mine）由 setEditorContent 从正文解析而来，
-  // 这里一并删掉的话，每次打开文档批注都会刚渲染出来就被抹掉。
-  document.querySelectorAll(".inline-note:not(.mine)").forEach((n) => n.remove());
+  // 正向选择 .friend-note：这个类名本身就不可能命中作者批注。
+  // 曾经这里写的是「清空所有 .inline-note」——两种来源共用一个类名，
+  // 于是把刚从正文解析出来的批注也删了，再一保存就从文件里永久消失。
+  document.querySelectorAll(".friend-note").forEach((n) => n.remove());
   try {
     const data = await api("/writing/comments/mine", { name });
     if (!data.ok || !data.comments.length) return;
@@ -1850,7 +1867,7 @@ async function loadComments(name) {
 
 function buildInlineNote(c) {
   const div = document.createElement("div");
-  div.className = "inline-note";
+  div.className = "note friend-note";
   div.contentEditable = "false";
   const d = new Date(c.createdAt);
   const p = (n) => String(n).padStart(2, "0");
@@ -2003,6 +2020,16 @@ editor.addEventListener("input", () => {
 async function save() {
   if (!current || current.readonly || !dirty) return;
   const content = getEditorContent();
+
+  const was = countNotes(current.baseContent || "");
+  const now = countNotes(content);
+  if (now < was - noteDeletes) {
+    // 没经过删除按钮，批注却变少了 —— 只可能是渲染或 DOM 操作出了问题。
+    // 宁可不保存：磁盘上那份是完好的，重新打开就能拿回来。
+    setSync(`已中止保存：批注从 ${was} 条变成 ${now} 条，且未经删除操作。请重新打开本篇`, "err");
+    console.error("[批注护栏] 中止保存", { was, now, noteDeletes, name: current.name });
+    return;
+  }
   try {
     const sentActiveMs = Math.round(pendingActiveMs);
     const data = await api("/writing/docs/put", {
@@ -2012,6 +2039,8 @@ async function save() {
     });
     if (data.ok) {
       dirty = false;
+      current.baseContent = content;   // 护栏基线
+      noteDeletes = 0;
       current.updatedAt = data.updatedAt;
       serverActiveMs = data.activeMs || 0;
       pendingActiveMs = Math.max(0, pendingActiveMs - sentActiveMs);
@@ -2079,7 +2108,7 @@ async function saveToken() {
 async function refresh() {
   // 正在写批注时不要后台重载：批注编辑不置 dirty，重载会重建 DOM 冲掉没存完的字
   const inNote = document.activeElement && document.activeElement.closest &&
-                 document.activeElement.closest(".inline-note");
+                 document.activeElement.closest(".note");
   if (!token || dirty || inNote) return;
   try {
     await loadList();
