@@ -719,18 +719,24 @@ async def writing_comments_delete(req: CommentDeleteRequest):
         return {"ok": False, "error": "服务器内部错误"}
 
 
+# 两个页面每次部署都在变，文件名不带版本号。不给缓存指令的话浏览器会按
+# 启发式规则自行缓存，用户刷新后拿到的仍是旧 HTML——表现为「新功能看不见」
+# 「快捷键不工作」，排查时极易误判成代码 bug。
+NO_CACHE = {"Cache-Control": "no-cache, must-revalidate", "Pragma": "no-cache"}
+
+
 @app.get("/read")
 async def writing_read_page():
     page = os.path.join(os.path.dirname(os.path.abspath(__file__)), "read_page.html")
     with open(page, encoding="utf-8") as f:
-        return HTMLResponse(f.read())
+        return HTMLResponse(f.read(), headers=NO_CACHE)
 
 
 @app.get("/write")
 async def writing_web_page():
     page = os.path.join(os.path.dirname(os.path.abspath(__file__)), "write_page.html")
     with open(page, encoding="utf-8") as f:
-        return HTMLResponse(f.read())
+        return HTMLResponse(f.read(), headers=NO_CACHE)
 
 
 @app.get("/writing/shelf-bg.jpg")
