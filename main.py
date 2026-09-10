@@ -359,7 +359,10 @@ async def writing_docs_get(req: DocsGetRequest):
         highlights = json.loads(content_decode(hb)) if hb else []
         return {"ok": True, "content": content_decode(doc.get("contentB64", "")),
                 "updatedAt": doc.get("updatedAt", 0), "readonly": doc.get("readonly", False),
-                "marks": doc.get("marks", []), "highlights": highlights}
+                "marks": doc.get("marks", []), "highlights": highlights,
+                # 旧架构遗留：批注曾存在这个字段里，现已改为写进正文的 HTML 注释。
+                # 保留读取路径，供迁移与兜底；迁移完成的文档此字段为空。
+                "legacyNotes": doc.get("notes", [])}
     except RuntimeError as e:
         print(f"[writing] docs/get 失败: {e}")
         return {"ok": False, "error": "服务器内部错误"}
