@@ -978,7 +978,7 @@
     <span class="sw" data-c="cyan"   style="background:#79c3c3" title="青"></span>
     <span class="sw" data-c="violet" style="background:#b6a0da" title="紫"></span>
     <button class="clr" data-c="strike" title="删除线（⌘⇧X）">S̶</button>
-    <button class="clr" data-c="clear">清除</button>
+    <button class="clr" data-c="clear" title="清掉选区内的高亮与删除线">清除</button>
   </div>
 
   <div id="shelfView">
@@ -2120,6 +2120,27 @@ function rangeInBlock(block, start, end) {
   return null;
 }
 
+/** 清掉某段里与选区重叠的 ~~ 标记。从后往前处理，避免前面的改动移位后面的偏移。 */
+function clearStrikesIn(span) {
+  const t = span.para, a = span.start, b = span.start + span.len;
+  const pairs = [];
+  STRIKE_RE.lastIndex = 0;
+  let m;
+  while ((m = STRIKE_RE.exec(t))) {
+    const s0 = m.index, e0 = m.index + m[0].length;
+    if (s0 < b && e0 > a) pairs.push({ s: s0, e: e0, inner: m[1] });
+  }
+  const sel = document.getSelection();
+  pairs.reverse().forEach((pr) => {
+    const r = rangeInBlock(span.block, pr.s, pr.e);
+    if (!r) return;
+    sel.removeAllRanges();
+    sel.addRange(r);
+    document.execCommand("insertText", false, pr.inner);   // 走 execCommand 才保得住撤销
+  });
+  return pairs.length;
+}
+
 /** 给选区加/去删除线。直接改正文里的 ~~ 标记——位置即锚点，改稿不会丢。 */
 function applyStrike() {
   const spans = selectionSpans();
@@ -2209,12 +2230,14 @@ function applyHighlight(color) {
   if (spans.length === 0 || !current) return;
   current.highlights = current.highlights || [];
 
+  let struck = 0;
   spans.forEach((span) => {
     const a = span.start, b = span.start + span.len;
     if (color === "clear") {
       // 移除与选区重叠的、同段高亮
       current.highlights = current.highlights.filter((h) =>
         !(h.para === span.para && h.start < b && h.start + h.len > a));
+      struck += clearStrikesIn(span);   // 删除线写在正文里，也一并清掉
     } else {
       // 先去掉同段完全被覆盖的旧高亮，再加新的
       current.highlights = current.highlights.filter((h) =>
@@ -2227,7 +2250,12 @@ function applyHighlight(color) {
   renderHighlights();
   persistHighlights();
   const n = spans.length > 1 ? `${spans.length} 段` : "";
-  setSync(color === "clear" ? `已清除高亮${n}` : `已高亮${n}`, "ok");
+  if (color === "clear") {
+    if (struck) { dirty = true; save(); }   // 删除线改的是正文，要落盘
+    setSync(`已清除标记${n}`, "ok");
+  } else {
+    setSync(`已高亮${n}`, "ok");
+  }
 }
 
 // 编辑后清理锚定失效（段落被改动）的高亮
