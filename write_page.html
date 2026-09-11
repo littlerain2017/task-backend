@@ -67,19 +67,53 @@
     color: var(--gold);
     white-space: nowrap;
   }
-  .doc-box {
+  /* 上一章 / 目录 / 下一章 合成一个分段控件：一圈边框、内部发丝分隔，
+     读起来是「一组章节导航」而不是三个各自独立的按钮。 */
+  .chap-bar {
     display: flex;
-    align-items: center;
+    align-items: stretch;
     min-width: 0;
-    max-width: 320px;
+    max-width: 360px;
     flex: 1;
     background: rgba(255, 255, 255, 0.035);
     border: 1px solid var(--line);
     border-radius: 8px;
+    overflow: hidden;
     transition: border-color 0.2s;
-    position: relative;
   }
-  .doc-box:hover { border-color: rgba(211, 178, 92, 0.4); }
+  .chap-bar:hover { border-color: rgba(211, 178, 92, 0.4); }
+  .cb-arrow {
+    flex-shrink: 0;
+    width: 34px;
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    font-family: inherit;
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    transition: color 0.2s, background 0.2s;
+  }
+  .cb-arrow:hover:not(:disabled) { color: var(--gold-bright); background: rgba(211, 178, 92, 0.1); }
+  .cb-arrow:disabled { color: var(--faint, #5f5849); opacity: 0.5; cursor: default; }
+  .cb-arrow.prev { border-right: 1px solid var(--line); }
+  .cb-arrow.next { border-left: 1px solid var(--line); }
+  .cb-doc {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+  }
+  .cb-pos {
+    position: absolute;
+    right: 26px;
+    font-size: 11.5px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+    letter-spacing: 0.02em;
+  }
   #docSelect {
     appearance: none;
     -webkit-appearance: none;
@@ -90,17 +124,17 @@
     outline: none;
     font-family: inherit;
     font-size: 14.5px;
-    padding: 8px 30px 8px 14px;
+    padding: 9px 74px 9px 13px;   /* 右侧给「3 / 9」与 ▾ 留位 */
     text-overflow: ellipsis;
     white-space: nowrap;
     overflow: hidden;
     cursor: pointer;
   }
   #docSelect option { color: #000; }
-  .doc-box::after {
+  .cb-doc::after {
     content: "▾";
     position: absolute;
-    right: 12px;
+    right: 11px;
     color: var(--muted);
     font-size: 10px;
     pointer-events: none;
@@ -364,21 +398,6 @@
 
   .btn.on { color: var(--gold); border-color: rgba(211, 178, 92, 0.5); }
 
-  /* 上一章 / 下一章 */
-  .chap-nav {
-    flex-shrink: 0;
-    padding: 6px 11px;
-    font-size: 17px;
-    line-height: 1;
-    letter-spacing: 0;
-  }
-  .chap-nav:disabled {
-    opacity: 0.28;
-    cursor: default;
-    color: var(--muted);
-    border-color: var(--line);
-  }
-  .chap-nav:disabled:hover { color: var(--muted); border-color: var(--line); }
 
   /* ===== 计时器胶囊 ===== */
   .timer {
@@ -829,9 +848,14 @@
   <header>
     <div class="header-inner">
       <div class="wordmark shelf-trigger" onclick="openShelf()" style="cursor: pointer;" title="回到书架">WRITING MACHINE</div>
-      <button class="btn chap-nav" id="prevDoc" onclick="gotoSibling(-1)" title="上一章（⌘⇧&lt;）">‹</button>
-      <div class="doc-box"><select id="docSelect" onchange="openDoc(this.value)"></select></div>
-      <button class="btn chap-nav" id="nextDoc" onclick="gotoSibling(1)" title="下一章（⌘⇧&gt;）">›</button>
+      <div class="chap-bar">
+        <button class="cb-arrow prev" id="prevDoc" onclick="gotoSibling(-1)" title="上一章（⌘⇧&lt;）">‹</button>
+        <div class="cb-doc">
+          <select id="docSelect" onchange="openDoc(this.value)"></select>
+          <span class="cb-pos" id="docPos"></span>
+        </div>
+        <button class="cb-arrow next" id="nextDoc" onclick="gotoSibling(1)" title="下一章（⌘⇧&gt;）">›</button>
+      </div>
       <div class="actions">
         <button class="btn" id="modeBtn" onclick="toggleScriptMode()" title="剧本模式（Final Draft 格式）">剧本</button>
         <button class="btn" onclick="newDoc()">新建</button>
@@ -1589,6 +1613,10 @@ function siblingDoc(delta) {
 }
 
 function renderChapNav() {
+  // 「3 / 9」让两个箭头有了明确含义——否则裸箭头可能被当成浏览器前进后退
+  const list = bookDocs();
+  const i = current ? list.findIndex((d) => d.name === current.name) : -1;
+  $("docPos").textContent = i >= 0 ? `${i + 1} / ${list.length}` : "";
   [["prevDoc", -1, "上一章"], ["nextDoc", 1, "下一章"]].forEach(([id, delta, label]) => {
     const btn = $(id);
     if (!btn) return;
