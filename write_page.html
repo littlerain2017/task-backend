@@ -171,20 +171,31 @@
   #syncText.err { color: var(--red); }
 
   /* ===== 编辑器 ===== */
+  /* 全局采用剧本排版：等宽拉丁、固定行律、稿纸式字幅。
+     --sc-lh 由字号×行距算出，分页线与页数都跟着它走，改行距不会脱节。 */
   #editor {
-    width: 100%;
-    max-width: var(--measure, 760px);
-    padding: 48px var(--side, 7ch) 45vh;
-    font-size: var(--font-size, 19px);
-    line-height: var(--leading, 2.05);
-    letter-spacing: var(--tracking, 0.05em);
+    position: relative;
+    --sc-lh: calc(var(--font-size, 15px) * var(--leading, 1.6));
+    width: min(calc(var(--measure, 74) * 1ch), calc(100vw - 24px));
+    max-width: none;
+    padding: calc(var(--sc-lh) * 2) 0 45vh;
+    font-family: "Courier Prime", "Courier New", Courier, monospace;
+    font-size: var(--font-size, 15px);
+    line-height: var(--sc-lh);
+    letter-spacing: var(--tracking, 0);
     color: var(--ink);
     caret-color: var(--gold);
     outline: none;
-    text-wrap: pretty;
+    text-wrap: initial;
     word-break: break-word;
   }
-  #editor .line { margin: 0 0 var(--para-gap, 1.1em); text-indent: 0; transition: opacity 0.45s ease; }
+  #editor .line {
+    margin: 0 0 var(--para-gap, 0em);
+    text-indent: 0;
+    padding-left: var(--side, 8ch);
+    padding-right: var(--side, 8ch);
+    transition: opacity 0.45s ease;
+  }
   #editor .line.h1 {
     font-size: 1.35em;
     font-weight: 600;
@@ -206,7 +217,7 @@
     letter-spacing: 0.5em;
     margin: 2.2em 0;
   }
-  #editor .line.blank { margin: 0 0 var(--para-gap, 1.1em); text-indent: 0; }
+  #editor .line.blank { margin: 0 0 var(--para-gap, 0em); text-indent: 0; }
   #editor.focus-on .line.dim { opacity: 0.28; }
   #editor[contenteditable="false"] { color: var(--muted); }
 
@@ -301,18 +312,8 @@
 
   /* ===== 剧本模式（Final Draft 规范：Courier 12pt、55 行/页 ≈ 1 分钟） ===== */
   /* 颜色完全跟随当前色调，只改字体与版式 */
-  #editor.script {
-    position: relative;
-    font-family: "Courier Prime", "Courier New", Courier, monospace;
-    --sc-lh: 24px;
-    font-size: 15px;
-    line-height: var(--sc-lh);
-    letter-spacing: 0;
-    width: min(74ch, calc(100vw - 24px));
-    max-width: none;
-    padding: calc(var(--sc-lh) * 2) 0 45vh;   /* 横向留白由 .line 的 8ch 负责，不叠加 --side */
-    text-wrap: initial;
-  }
+  /* 排版已是全局基础样式，.script 现在只负责剧本专有的东西：
+     稿纸分页线、元素语义色与缩进、页数统计。 */
   /* 分页线：每 55 行一页（一页一分钟） */
   #editor.script::before {
     content: "";
@@ -330,12 +331,7 @@
       var(--gold-line) calc(var(--sc-lh) * 55)
     );
   }
-  #editor.script .line {
-    margin: 0;
-    text-indent: 0;
-    padding-left: 8ch;
-    padding-right: 8ch;
-  }
+  #editor.script .line { margin: 0; }
   /* 元素语义色：场景=鎏金 / 人名=灰绿 / 对白=正文色 / 括号注=灰 / 转场=雾紫 */
   #editor.script .line.sc-scene {
     text-transform: uppercase;
@@ -916,27 +912,27 @@
       <div class="tones" id="toneRow"></div>
     </div>
     <div class="row">
-      <span class="row-title">字号 <span id="fontSizeVal">19</span>px</span>
-      <input type="range" min="16" max="24" step="1" id="fontSizeRange" oninput="setPref('fontSize', +this.value)">
+      <span class="row-title">字号 <span id="fontSizeVal">15</span>px</span>
+      <input type="range" min="12" max="22" step="1" id="fontSizeRange" oninput="setPref('fontSize', +this.value)">
     </div>
     <div class="row">
-      <span class="row-title">行宽 <span id="measureVal">760</span>px</span>
-      <input type="range" min="600" max="960" step="20" id="measureRange" oninput="setPref('measure', +this.value)">
+      <span class="row-title">行宽 <span id="measureVal">74</span>ch</span>
+      <input type="range" min="56" max="104" step="2" id="measureRange" oninput="setPref('measure', +this.value)">
     </div>
     <div class="row">
       <span class="row-title">字距 <span id="trackingVal">0.05</span>em</span>
       <input type="range" min="0" max="0.12" step="0.01" id="trackingRange" oninput="setPref('tracking', +this.value)">
     </div>
     <div class="row">
-      <span class="row-title">行距 <span id="leadingVal">2.05</span></span>
-      <input type="range" min="1.4" max="2.6" step="0.05" id="leadingRange" oninput="setPref('leading', +this.value)">
+      <span class="row-title">行距 <span id="leadingVal">1.60</span></span>
+      <input type="range" min="1.3" max="2.4" step="0.05" id="leadingRange" oninput="setPref('leading', +this.value)">
     </div>
     <div class="row">
-      <span class="row-title">段距 <span id="paraGapVal">1.10</span>em</span>
+      <span class="row-title">段距 <span id="paraGapVal">0.00</span>em</span>
       <input type="range" min="0" max="2.4" step="0.1" id="paraGapRange" oninput="setPref('paraGap', +this.value)">
     </div>
     <div class="row">
-      <span class="row-title">两侧留白 <span id="sideVal">7</span>ch</span>
+      <span class="row-title">两侧留白 <span id="sideVal">8</span>ch</span>
       <input type="range" min="0" max="14" step="1" id="sideRange" oninput="setPref('side', +this.value)">
     </div>
     <div class="switch">
@@ -969,10 +965,13 @@ let serverActiveMs = 0;
 let pendingActiveMs = Number(localStorage.getItem("writing_pending_active") || 0);
 let lastKeyTs = 0;
 let prefs = Object.assign(
-  { tone: "暖黑", fontSize: 19, measure: 760, tracking: 0.05,
-    leading: 2.05, paraGap: 1.1, side: 7, focus: true },
+  // 剧本口径：15px × 1.6 = 24px 行高，字幅 74ch，两侧 8ch，段距交给正文里的空行
+  { tone: "暖黑", fontSize: 15, measure: 74, tracking: 0,
+    leading: 1.6, paraGap: 0, side: 8, focus: true },
   JSON.parse(localStorage.getItem("writing_prefs") || "{}")
 );
+// 旧版行宽以 px 存（600–960），新版以 ch 存（60–100）。一次性迁移。
+if (prefs.measure > 200) prefs.measure = 74;
 
 const $ = (id) => document.getElementById(id);
 const editor = $("editor");
@@ -985,7 +984,7 @@ function applyPrefs() {
   r.setProperty("--header", t.header);
   r.setProperty("--ink", t.ink);
   r.setProperty("--font-size", prefs.fontSize + "px");
-  r.setProperty("--measure", prefs.measure + "px");
+  r.setProperty("--measure", prefs.measure);
   r.setProperty("--tracking", prefs.tracking + "em");
   r.setProperty("--leading", prefs.leading);
   r.setProperty("--para-gap", prefs.paraGap + "em");
@@ -1007,6 +1006,7 @@ function applyPrefs() {
   $("focusToggle").checked = prefs.focus;
   document.querySelectorAll(".tone").forEach((el) =>
     el.classList.toggle("active", el.dataset.tone === prefs.tone));
+  if (current && isScriptMode()) updatePageInfo();   // 行高变了，页数要跟着重算
 }
 
 function setPref(key, val) {
@@ -1311,12 +1311,17 @@ function classifyScriptLines(lines) {
 
 const SCRIPT_CLASS = { blank: "blank", scene: "sc-scene", trans: "sc-trans",
                        paren: "sc-paren", dial: "sc-dial", char: "sc-char", action: "sc-action" };
-const SCRIPT_LINE_PX = 24;                              // 必须与 CSS --sc-lh 一致
-const SCRIPT_PAGE_PX = SCRIPT_LINE_PX * LINES_PER_PAGE; // 一页 = 55 行的实际像素高度
+/* 行高由「字号 × 行距」算出，会随调节面板变化——所以实测，不能写死。
+   分页线（CSS 的 --sc-lh）与页数（这里）用的是同一个值，改行距不会脱节。 */
+function scriptLinePx() {
+  return parseFloat(getComputedStyle(editor).lineHeight) || 24;
+}
 
 // 直接量实际排版高度来数页，与稿纸上画的分页线用同一套几何，保证「约X页」= 眼睛看到的页数
 function updatePageInfo() {
-  const gridTop = SCRIPT_LINE_PX * 2;  // 分页线起点（对应顶部留白）
+  const lh = scriptLinePx();
+  const pagePx = lh * LINES_PER_PAGE;
+  const gridTop = lh * 2;              // 分页线起点（对应顶部留白）
   // 批注不是剧本内容，量高度前先藏起来，否则会把页数撑大
   const notes = editor.querySelectorAll(".note");
   notes.forEach((n) => (n.style.display = "none"));
@@ -1327,7 +1332,7 @@ function updatePageInfo() {
     if (b > bottom) bottom = b;
   });
   notes.forEach((n) => (n.style.display = ""));
-  const pages = Math.max(1, Math.ceil((bottom - gridTop) / SCRIPT_PAGE_PX));
+  const pages = Math.max(1, Math.ceil((bottom - gridTop) / pagePx));
   $("pageCount").textContent = pages;
   $("minCount").textContent = pages;
 }
