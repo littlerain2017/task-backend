@@ -659,11 +659,12 @@
     text-align: center;
   }
   .shelf-sub {
-    margin: 10px 0 7vh;
-    font-size: 13px;
-    letter-spacing: 0.3em;
-    color: var(--muted);
-    text-indent: 0.3em;
+    margin: 14px 0 7vh;
+    font-size: 12px;
+    letter-spacing: 0.26em;
+    color: var(--faint, #5f5849);
+    text-indent: 0.26em;
+    font-variant-numeric: tabular-nums;
   }
   .shelf-grid {
     display: flex;
@@ -673,53 +674,73 @@
     width: 100%;
     max-width: 900px;
   }
+  /* 默认安静：只有一道发丝边与极淡的底。鎏金留给"在写"的那一本。
+     去掉了原先的常驻浮动动画——六张卡一起飘像游戏菜单，不像写作工具。 */
   .book-card {
-    width: 250px;
-    min-height: 150px;
-    padding: 26px 24px 20px;
-    border: 1px solid var(--gold-line);
-    border-radius: 14px;
-    background: rgba(255, 255, 255, 0.03);
+    position: relative;
+    width: 252px;
+    padding: 24px 22px 20px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.025);
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
-    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+    box-shadow: 0 14px 42px rgba(0, 0, 0, 0.4);
     cursor: pointer;
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.25s, box-shadow 0.35s;
-    animation: bookFloat 7s ease-in-out infinite;
+    gap: 14px;
+    transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1),
+                border-color 0.3s, box-shadow 0.4s, background 0.3s;
   }
-  .book-card:nth-child(2n) { animation-delay: -2.3s; }
-  .book-card:nth-child(3n) { animation-delay: -4.6s; }
   .book-card:hover {
-    transform: translateY(-10px);
-    border-color: rgba(211, 178, 92, 0.5);
-    box-shadow: 0 30px 70px rgba(0, 0, 0, 0.6);
-    animation-play-state: paused;
+    transform: translateY(-6px);
+    border-color: var(--gold-line);
+    background: rgba(255, 255, 255, 0.05);
+    box-shadow: 0 26px 64px rgba(0, 0, 0, 0.58);
   }
-  @keyframes bookFloat {
-    0%, 100% { translate: 0 0; }
-    50% { translate: 0 -7px; }
+  /* 最近写过的那一本：鎏金边 + 顶部一道细光 */
+  .book-card.current { border-color: rgba(211, 178, 92, 0.42); }
+  .book-card.current::before {
+    content: "";
+    position: absolute;
+    top: -1px; left: 22px; right: 22px; height: 1px;
+    background: linear-gradient(90deg, transparent, var(--gold), transparent);
+  }
+  .book-card .bc-tag {
+    position: absolute;
+    top: 14px; right: 16px;
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    color: var(--gold);
+    text-indent: 0.18em;
+    opacity: 0.85;
   }
   .book-card .bc-name {
     font-family: "Cormorant Garamond", "Noto Serif SC", Georgia, serif;
-    font-size: 21px;
+    font-size: 20px;
     font-weight: 600;
     color: var(--ink);
-    letter-spacing: 0.05em;
-    line-height: 1.4;
+    letter-spacing: 0.04em;
+    line-height: 1.35;
+    text-wrap: balance;
+    padding-right: 28px;   /* 给「在写」标签让位 */
   }
-  .book-card .bc-meta { margin-top: auto; font-size: 12.5px; color: var(--muted); }
-  .book-card .bc-bar {
-    height: 2px;
-    background: var(--gold-line);
-    border-radius: 1px;
-    overflow: hidden;
+  .book-card .bc-meta {
+    font-size: 12.5px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
   }
-  .book-card .bc-bar i { display: block; height: 100%; background: var(--gold); }
+  /* 原来这里是一根「相对最长的那本书」的进度条——读者无从解读。
+     换成最后编辑时间：书架因此能告诉你上次停在哪。 */
+  .book-card .bc-when {
+    font-size: 11.5px;
+    color: var(--faint, #5f5849);
+    letter-spacing: 0.03em;
+  }
   .book-card .bc-addchap {
-    margin-top: 12px;
+    margin-top: 4px;
     align-self: flex-start;
     font-family: inherit;
     font-size: 12px;
@@ -738,15 +759,19 @@
   @media (hover: none) { .book-card .bc-addchap { opacity: 1; } }
   .book-card.new {
     border-style: dashed;
+    border-color: var(--line);
     align-items: center;
     justify-content: center;
-    color: var(--gold);
-    font-size: 15px;
+    min-height: 128px;
+    color: var(--muted);
+    font-size: 14px;
     letter-spacing: 0.1em;
     background: transparent;
+    box-shadow: none;
   }
+  .book-card.new:hover { color: var(--gold); border-color: var(--gold-line); background: transparent; }
   @media (max-width: 600px) {
-    .book-card { width: 100%; min-height: 110px; }
+    .book-card { width: 100%; }
   }
 
   /* ===== 令牌配置浮层 ===== */
@@ -880,7 +905,8 @@
     <canvas id="starCanvas"></canvas>
     <div class="shelf-content">
       <div class="shelf-title">WRITING MACHINE</div>
-      <div class="shelf-grid" id="shelfGrid" style="margin-top: 7vh;"></div>
+      <div class="shelf-sub" id="shelfSub"></div>
+      <div class="shelf-grid" id="shelfGrid"></div>
     </div>
   </div>
 
@@ -1658,50 +1684,79 @@ async function openShelf() {
   try { await loadList(); renderShelfView(); } catch (e) { /* 用缓存渲染 */ }
 }
 
+function timeAgo(ms) {
+  if (!ms) return "";
+  const d = Math.floor((Date.now() - ms) / 1000);
+  if (d < 90) return "刚刚";
+  if (d < 3600) return `${Math.floor(d / 60)} 分钟前`;
+  if (d < 86400) return `${Math.floor(d / 3600)} 小时前`;
+  if (d < 86400 * 30) return `${Math.floor(d / 86400)} 天前`;
+  const t = new Date(ms);
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
+}
+
 function renderShelfView() {
   const grid = $("shelfGrid");
   grid.innerHTML = "";
-  const books = new Map();  // book → {count, cjk, en}
+  const books = new Map();  // book → {count, cjk, en, updatedAt}
   docList.forEach((d) => {
     const b = bookOf(d.name);
-    const s = books.get(b) || { count: 0, cjk: 0, en: 0 };
+    const s = books.get(b) || { count: 0, cjk: 0, en: 0, updatedAt: 0 };
     s.count += 1;
     s.cjk += d.cjk || 0;
     s.en += d.en || 0;
+    s.updatedAt = Math.max(s.updatedAt, d.updatedAt || 0);
     books.set(b, s);
   });
-  if (!books.has("")) books.set("", { count: 0, cjk: 0, en: 0 });
-  const maxWords = Math.max(1, ...Array.from(books.values()).map((s) => s.cjk + s.en));
-  Array.from(books.keys())
-    .sort((a, b) => (a === "" ? -1 : b === "" ? 1 : a.localeCompare(b)))
-    .forEach((book) => {
-      const s = books.get(book);
-      const words = s.cjk + s.en;
-      const card = document.createElement("div");
-      card.className = "book-card";
-      const name = document.createElement("div");
-      name.className = "bc-name";
-      name.textContent = bookLabel(book);
-      const bar = document.createElement("div");
-      bar.className = "bc-bar";
-      const fill = document.createElement("i");
-      fill.style.width = `${Math.max(4, Math.round((words / maxWords) * 100))}%`;
-      bar.appendChild(fill);
-      const meta = document.createElement("div");
-      meta.className = "bc-meta";
-      meta.textContent = `${s.count} 篇 · ${words.toLocaleString()} 字`;
-      const addChap = document.createElement("button");
-      addChap.className = "bc-addchap";
-      addChap.textContent = "＋ 新章节";
-      addChap.title = `在「${bookLabel(book)}」里新建一章`;
-      addChap.onclick = (e) => { e.stopPropagation(); newDoc(book); };
-      card.appendChild(name);
-      card.appendChild(meta);
-      card.appendChild(bar);
-      card.appendChild(addChap);
-      card.onclick = () => switchBook(book);
-      grid.appendChild(card);
-    });
+  // 空书架不占位。此前根书架即使 0 篇也强行画一张卡，永远显示「0 篇 · 0 字」。
+  const entries = Array.from(books.entries()).filter(([, s]) => s.count > 0);
+
+  // 按最近编辑排序——书架因此能告诉你上次停在哪，而不是按字母排。
+  entries.sort((a, b) => b[1].updatedAt - a[1].updatedAt);
+  const latest = entries.length ? entries[0][0] : null;
+
+  const totalWords = entries.reduce((n, [, s]) => n + s.cjk + s.en, 0);
+  $("shelfSub").textContent = entries.length
+    ? `${entries.length} 本 · ${totalWords.toLocaleString()} 字`
+    : "";
+
+  entries.forEach(([book, s]) => {
+    const words = s.cjk + s.en;
+    const card = document.createElement("div");
+    card.className = "book-card" + (book === latest ? " current" : "");
+
+    const name = document.createElement("div");
+    name.className = "bc-name";
+    name.textContent = bookLabel(book);
+
+    const meta = document.createElement("div");
+    meta.className = "bc-meta";
+    meta.textContent = `${s.count} 篇 · ${words.toLocaleString()} 字`;
+
+    const when = document.createElement("div");
+    when.className = "bc-when";
+    when.textContent = s.updatedAt ? `最后编辑 · ${timeAgo(s.updatedAt)}` : "";
+
+    const addChap = document.createElement("button");
+    addChap.className = "bc-addchap";
+    addChap.textContent = "＋ 新章节";
+    addChap.title = `在「${bookLabel(book)}」里新建一章`;
+    addChap.onclick = (e) => { e.stopPropagation(); newDoc(book); };
+
+    if (book === latest) {
+      const tag = document.createElement("span");
+      tag.className = "bc-tag";
+      tag.textContent = "在写";
+      card.appendChild(tag);
+    }
+    card.appendChild(name);
+    card.appendChild(meta);
+    card.appendChild(when);
+    card.appendChild(addChap);
+    card.onclick = () => switchBook(book);
+    grid.appendChild(card);
+  });
+
   const add = document.createElement("div");
   add.className = "book-card new";
   add.textContent = "＋ 开一本新书";
