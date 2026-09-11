@@ -358,6 +358,17 @@
     color: var(--muted);
   }
 
+  /* 删除线：正文里写成 ~~文字~~（标准 Markdown）。
+     标记本身淡显而不隐藏——隐藏会让 textContent 与正文脱节，
+     那正是 contenteditable 里数据丢失的常见来源。 */
+  #editor .strike {
+    text-decoration: line-through;
+    text-decoration-color: var(--red);
+    text-decoration-thickness: 1.5px;
+    opacity: 0.5;
+  }
+  #editor .mk { color: var(--faint, #5f5849); opacity: 0.45; }
+
   /* 彩色高亮：选中文字上色，用于区分修改/待办等 */
   #editor .hl { border-radius: 2px; padding: 0 1px; }
   #editor .hl-red    { color: #e6897a; }
@@ -966,6 +977,7 @@
     <span class="sw" data-c="green"  style="background:#8fc99a" title="绿"></span>
     <span class="sw" data-c="cyan"   style="background:#79c3c3" title="青"></span>
     <span class="sw" data-c="violet" style="background:#b6a0da" title="紫"></span>
+    <button class="clr" data-c="strike" title="删除线（⌘⇧X）">S̶</button>
     <button class="clr" data-c="clear">清除</button>
   </div>
 
@@ -1119,6 +1131,9 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     if (e.shiftKey) jumpNextMark();  // ⌘⇧M 在书签间跳转
     else toggleMark();               // ⌘M 标记/取消当前段落
+  } else if (e.code === "KeyX" && e.shiftKey) {
+    e.preventDefault();
+    applyStrike();
   } else if (e.code === "Slash" && !e.shiftKey) {
     // ⌘/ 加批注。原本用 ⌘⇧N，但 macOS 上 Chrome/Safari 都拿它开无痕窗口，
     // 浏览器级快捷键在页面收到 keydown 之前就被吃掉，preventDefault 拦不住。
@@ -2037,6 +2052,40 @@ function escapeHtml(s) {
 const HL_COLORS = ["red", "amber", "green", "cyan", "violet"];
 
 // 把存储的高亮渲染进段落（重建 innerHTML，只对非当前光标所在段安全调用）
+const STRIKE_RE = /~~([^~\n]+)~~/g;
+
+/** 一段文字的标记渲染：删除线（写在正文里）与高亮（存在云端）合并成一次
+    innerHTML 重写。两者都不改 textContent，所以序列化与保存逻辑不受影响。 */
+function markupOf(text, hls) {
+  const strikes = [];
+  STRIKE_RE.lastIndex = 0;
+  let m;
+  while ((m = STRIKE_RE.exec(text))) {
+    strikes.push({ at: m.index, end: m.index + m[0].length, kind: "strike" });
+  }
+  // 划掉的文字不再叠加高亮——两个标记压在一起读不清
+  const inStrike = (i) => strikes.some((x) => i >= x.at && i < x.end);
+  const events = strikes.concat(
+    hls.filter((h) => !inStrike(h.start) && !inStrike(h.start + h.len - 1))
+       .map((h) => ({ at: h.start, end: h.start + h.len, kind: "hl", color: h.color }))
+  ).sort((a, b) => a.at - b.at);
+
+  let html = "", pos = 0;
+  for (const ev of events) {
+    if (ev.at < pos) continue;                 // 跳过重叠
+    html += escapeHtml(text.slice(pos, ev.at));
+    if (ev.kind === "strike") {
+      const inner = text.slice(ev.at + 2, ev.end - 2);
+      html += `<span class="mk">~~</span><span class="strike">${escapeHtml(inner)}</span><span class="mk">~~</span>`;
+    } else {
+      html += `<span class="hl hl-${ev.color}">${escapeHtml(text.slice(ev.at, ev.end))}</span>`;
+    }
+    pos = ev.end;
+  }
+  html += escapeHtml(text.slice(pos));
+  return { html, marked: events.length > 0 };
+}
+
 function renderHighlights() {
   if (!current) return;
   const byPara = {};
@@ -2047,20 +2096,36 @@ function renderHighlights() {
     const hls = (byPara[text] || [])
       .filter((h) => HL_COLORS.includes(h.color) && h.len > 0 && h.start >= 0 && h.start + h.len <= text.length)
       .sort((a, b) => a.start - b.start);
-    if (hls.length === 0) {
-      if (node.querySelector && node.querySelector(".hl")) node.textContent = text; // 清掉残留 span
+    const { html, marked } = markupOf(text, hls);
+    if (!marked) {
+      if (node.querySelector && node.querySelector(".hl, .strike")) node.textContent = text;
       return;
     }
-    let html = "", pos = 0;
-    hls.forEach((h) => {
-      if (h.start < pos) return;  // 跳过重叠
-      html += escapeHtml(text.slice(pos, h.start));
-      html += `<span class="hl hl-${h.color}">${escapeHtml(text.slice(h.start, h.start + h.len))}</span>`;
-      pos = h.start + h.len;
-    });
-    html += escapeHtml(text.slice(pos));
     node.innerHTML = html;
   });
+}
+
+/** 给选区加/去删除线。直接改正文里的 ~~ 标记——位置即锚点，改稿不会丢。 */
+function applyStrike() {
+  const spans = selectionSpans();
+  $("hlPalette").classList.remove("open");
+  if (spans.length === 0 || !current) return;
+  if (current.readonly) { setSync("只读文件不能改", "err"); return; }
+  spans.forEach((span) => {
+    const t = span.para, a = span.start, b = span.start + span.len;
+    const wrapped = t.slice(Math.max(0, a - 2), a) === "~~" && t.slice(b, b + 2) === "~~";
+    span.block.textContent = wrapped
+      ? t.slice(0, a - 2) + t.slice(a, b) + t.slice(b + 2)   // 取消
+      : t.slice(0, a) + "~~" + t.slice(a, b) + "~~" + t.slice(b);
+  });
+  document.getSelection().removeAllRanges();
+  reclassify();
+  applyMarks();
+  renderHighlights();
+  renderCounts();
+  dirty = true;
+  save();
+  setSync(spans.length > 1 ? `已划掉 ${spans.length} 段` : "已划掉", "ok");
 }
 
 // 从当前选区解析出 {block, para, start, len}；跨段或无选区返回 null
@@ -2154,7 +2219,10 @@ function pruneHighlights() {
 
 $("hlPalette").addEventListener("mousedown", (e) => {
   const el = e.target.closest("[data-c]");
-  if (el) { e.preventDefault(); applyHighlight(el.dataset.c); }
+  if (!el) return;
+  e.preventDefault();
+  if (el.dataset.c === "strike") applyStrike();
+  else applyHighlight(el.dataset.c);
 });
 document.addEventListener("selectionchange", () => {
   if (document.activeElement === editor) setTimeout(showPalette, 0);
