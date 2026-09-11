@@ -358,24 +358,25 @@
     color: var(--muted);
   }
 
-  /* 删除线：正文里写成 ~~文字~~（标准 Markdown）。
-     标记本身淡显而不隐藏——隐藏会让 textContent 与正文脱节，
-     那正是 contenteditable 里数据丢失的常见来源。 */
-  #editor .strike {
+  /* 标记一律用 CSS Custom Highlight API 绘制：给文字范围上样式，**完全不改 DOM**。
+     此前是往段落里插 <span>，而任何程序化 DOM 写入都会清空 contenteditable
+     的原生撤销栈——划一次删除线 ⌘Z 就废了，撤销后还会残留半透明的壳。
+     ::highlight() 只认 color / background-color / text-decoration / text-shadow，
+     所以变暗用 color 而不是 opacity。 */
+  ::highlight(strike) {
     text-decoration: line-through;
     text-decoration-color: var(--red);
     text-decoration-thickness: 1.5px;
-    opacity: 0.5;
+    color: var(--muted);
   }
-  #editor .mk { color: var(--faint, #5f5849); opacity: 0.45; }
+  ::highlight(mk) { color: rgba(95, 88, 73, 0.55); }
+  ::highlight(hl-red)    { color: #e6897a; }
+  ::highlight(hl-amber)  { color: #e0a860; }
+  ::highlight(hl-green)  { color: #8fc99a; }
+  ::highlight(hl-cyan)   { color: #79c3c3; }
+  ::highlight(hl-violet) { color: #b6a0da; }
 
   /* 彩色高亮：选中文字上色，用于区分修改/待办等 */
-  #editor .hl { border-radius: 2px; padding: 0 1px; }
-  #editor .hl-red    { color: #e6897a; }
-  #editor .hl-amber  { color: #e0a860; }
-  #editor .hl-green  { color: #8fc99a; }
-  #editor .hl-cyan   { color: #79c3c3; }
-  #editor .hl-violet { color: #b6a0da; }
 
   #hlPalette {
     position: fixed; z-index: 40; display: none;
@@ -2053,55 +2054,52 @@ const HL_COLORS = ["red", "amber", "green", "cyan", "violet"];
 
 // 把存储的高亮渲染进段落（重建 innerHTML，只对非当前光标所在段安全调用）
 const STRIKE_RE = /~~([^~\n]+)~~/g;
+const HL_LAYERS = HL_COLORS.map((c) => "hl-" + c);
+const MARK_LAYERS = HL_LAYERS.concat(["strike", "mk"]);
 
-/** 一段文字的标记渲染：删除线（写在正文里）与高亮（存在云端）合并成一次
-    innerHTML 重写。两者都不改 textContent，所以序列化与保存逻辑不受影响。 */
-function markupOf(text, hls) {
-  const strikes = [];
-  STRIKE_RE.lastIndex = 0;
-  let m;
-  while ((m = STRIKE_RE.exec(text))) {
-    strikes.push({ at: m.index, end: m.index + m[0].length, kind: "strike" });
-  }
-  // 划掉的文字不再叠加高亮——两个标记压在一起读不清
-  const inStrike = (i) => strikes.some((x) => i >= x.at && i < x.end);
-  const events = strikes.concat(
-    hls.filter((h) => !inStrike(h.start) && !inStrike(h.start + h.len - 1))
-       .map((h) => ({ at: h.start, end: h.start + h.len, kind: "hl", color: h.color }))
-  ).sort((a, b) => a.at - b.at);
-
-  let html = "", pos = 0;
-  for (const ev of events) {
-    if (ev.at < pos) continue;                 // 跳过重叠
-    html += escapeHtml(text.slice(pos, ev.at));
-    if (ev.kind === "strike") {
-      const inner = text.slice(ev.at + 2, ev.end - 2);
-      html += `<span class="mk">~~</span><span class="strike">${escapeHtml(inner)}</span><span class="mk">~~</span>`;
-    } else {
-      html += `<span class="hl hl-${ev.color}">${escapeHtml(text.slice(ev.at, ev.end))}</span>`;
-    }
-    pos = ev.end;
-  }
-  html += escapeHtml(text.slice(pos));
-  return { html, marked: events.length > 0 };
-}
-
+/** 重画全部标记。用 CSS Custom Highlight API——零 DOM 改动，撤销栈完好。 */
 function renderHighlights() {
-  if (!current) return;
+  if (!window.CSS || !CSS.highlights) return;   // 不支持就只是不显示标记，正文不受影响
+  const bucket = {};
+  MARK_LAYERS.forEach((n) => (bucket[n] = []));
+  const add = (layer, block, a, b) => {
+    const r = rangeInBlock(block, a, b);
+    if (r) bucket[layer].push(r);
+  };
+
   const byPara = {};
-  (current.highlights || []).forEach((h) => (byPara[h.para] = byPara[h.para] || []).push(h));
+  ((current && current.highlights) || []).forEach(
+    (h) => (byPara[h.para] = byPara[h.para] || []).push(h));
+
   editor.childNodes.forEach((node) => {
     if (node.nodeType !== Node.ELEMENT_NODE || isNote(node)) return;
     const text = node.textContent;
-    const hls = (byPara[text] || [])
-      .filter((h) => HL_COLORS.includes(h.color) && h.len > 0 && h.start >= 0 && h.start + h.len <= text.length)
-      .sort((a, b) => a.start - b.start);
-    const { html, marked } = markupOf(text, hls);
-    if (!marked) {
-      if (node.querySelector && node.querySelector(".hl, .strike")) node.textContent = text;
-      return;
+    if (!text) return;
+
+    const strikes = [];
+    STRIKE_RE.lastIndex = 0;
+    let m;
+    while ((m = STRIKE_RE.exec(text))) {
+      const a = m.index, b = a + m[0].length;
+      strikes.push([a, b]);
+      add("mk", node, a, a + 2);
+      add("mk", node, b - 2, b);
+      add("strike", node, a + 2, b - 2);
     }
-    node.innerHTML = html;
+    const inStrike = (i) => strikes.some(([a, b]) => i >= a && i < b);
+
+    (byPara[text] || []).forEach((h) => {
+      if (!HL_COLORS.includes(h.color)) return;
+      if (h.len <= 0 || h.start < 0 || h.start + h.len > text.length) return;
+      // 划掉的文字不再叠加高亮——两个标记压在一起读不清
+      if (inStrike(h.start) || inStrike(h.start + h.len - 1)) return;
+      add("hl-" + h.color, node, h.start, h.start + h.len);
+    });
+  });
+
+  MARK_LAYERS.forEach((n) => {
+    if (bucket[n].length) CSS.highlights.set(n, new Highlight(...bucket[n]));
+    else CSS.highlights.delete(n);
   });
 }
 
@@ -2307,10 +2305,7 @@ editor.addEventListener("input", (e) => {
   rememberEditPos();
   reclassify();
   applyMarks();
-  // 撤销/重做只还原文字，而装饰 span（.strike / .hl）是 renderHighlights
-  // 程序化写进去的、不在撤销栈里——不重刷的话 span 会留在 DOM 上，
-  // 表现为文字回来了却一直发暗（.strike 带 opacity .5）。
-  if (e.inputType === "historyUndo" || e.inputType === "historyRedo") renderHighlights();
+  renderHighlights();   // 零 DOM 改动，每次输入都能安全重画
   renderCounts();
   setSync("编辑中…", "busy");
   clearTimeout(saveTimer);
