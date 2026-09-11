@@ -1,7 +1,7 @@
 """writing_logic 单元测试。"""
 import unittest
 
-from writing_logic import aggregate_file_docs, build_daily, count_text, normalize_files
+from writing_logic import aggregate_file_docs, build_daily, count_text
 
 
 class TestCountText(unittest.TestCase):
@@ -89,24 +89,6 @@ class TestBuildDaily(unittest.TestCase):
         d = build_daily("u1", "2026-07-07",
                         {"a.md": {"cjk": 100, "en": 0}, "b.md": {"cjk": 40, "en": 0}}, first, 2)
         self.assertEqual(d["deltaCjk"], 40)
-
-
-class TestNormalizeFiles(unittest.TestCase):
-    def test_valid(self):
-        counts = normalize_files([{"name": "a.md", "cjk": 1, "en": 2}])
-        self.assertEqual(counts, {"a.md": {"cjk": 1, "en": 2}})
-
-    def test_rejects_negative(self):
-        with self.assertRaises(ValueError):
-            normalize_files([{"name": "a.md", "cjk": -1, "en": 0}])
-
-    def test_rejects_missing_name(self):
-        with self.assertRaises(ValueError):
-            normalize_files([{"cjk": 1, "en": 0}])
-
-    def test_rejects_non_list(self):
-        with self.assertRaises(ValueError):
-            normalize_files({"name": "a.md"})
 
 
 if __name__ == "__main__":

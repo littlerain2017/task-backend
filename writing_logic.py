@@ -77,23 +77,3 @@ def aggregate_file_docs(docs):
     for d in docs:
         counts[d["name"]] = {"cjk": d["cjk"], "en": d["en"]}
     return counts
-
-
-def normalize_files(raw_files):
-    """校验并归一化客户端上报的文件列表 → {name: {cjk, en}}。
-
-    非法条目直接拒绝（抛 ValueError），不静默丢弃。
-    """
-    if not isinstance(raw_files, list) or len(raw_files) > 200:
-        raise ValueError("files 必须是不超过 200 项的列表")
-    counts = {}
-    for item in raw_files:
-        name = item.get("name")
-        cjk = item.get("cjk")
-        en = item.get("en")
-        if not isinstance(name, str) or not (0 < len(name) <= 200):
-            raise ValueError(f"非法文件名: {name!r}")
-        if not isinstance(cjk, int) or not isinstance(en, int) or cjk < 0 or en < 0:
-            raise ValueError(f"非法字数: {name} cjk={cjk!r} en={en!r}")
-        counts[name] = {"cjk": cjk, "en": en}
-    return counts

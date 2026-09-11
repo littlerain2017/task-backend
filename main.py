@@ -287,8 +287,9 @@ async def writing_update_progress(uid: str, date_str: str, now_ms: int, active_m
     return daily
 
 
-async def writing_docs_of(uid: str, with_content: bool):
-    field = "" if with_content else '.field({name:true,updatedAt:true,editor:true,hash:true,cjk:true,en:true,readonly:true,marks:true})'
+async def writing_doc_metas(uid: str):
+    """列出该用户全部文档的元信息（不含正文）。正文一律走 docs/get 单取。"""
+    field = '.field({name:true,updatedAt:true,editor:true,hash:true,cjk:true,en:true,readonly:true,marks:true})'
     q = f'db.collection("docs").where({{uid:{json.dumps(uid)}}}).limit(1000){field}.get()'
     return [json.loads(r) for r in (await writing_db("databasequery", q)).get("data", [])]
 
@@ -328,7 +329,7 @@ async def writing_docs_list(req: DocsListRequest):
     if not uid:
         return {"ok": False, "error": "无效令牌"}
     try:
-        docs = await writing_docs_of(uid, with_content=False)
+        docs = await writing_doc_metas(uid)
         docs.sort(key=lambda d: d.get("name", ""))
         today = None
         if req.date and DATE_RE.match(req.date):
@@ -472,7 +473,7 @@ async def writing_docs_changes(req: DocsChangesRequest):
     if not DATE_RE.match(req.date):
         return {"ok": False, "error": "日期格式应为 YYYY-MM-DD"}
     try:
-        metas = await writing_docs_of(uid, with_content=False)
+        metas = await writing_doc_metas(uid)
         changed = []
         removed = []
         local_names = set(n for n in req.names if isinstance(n, str))
@@ -551,7 +552,7 @@ class CommentDeleteRequest(BaseModel):
 
 async def writing_book_chapters(uid: str, book: str):
     """返回该用户某本书下所有文件名（升序）。"""
-    metas = await writing_docs_of(uid, with_content=False)
+    metas = await writing_doc_metas(uid)
     names = [m["name"] for m in metas if book_of_name(m.get("name", "")) == book]
     return sorted(names)
 
@@ -787,7 +788,7 @@ def advisor_book_prefix(name: str) -> str:
 
 async def advisor_find_doc(uid: str, prefix: str, starts: str) -> str:
     """在某本书里找第一个文件名以 starts 开头的文档，返回完整 name；没有返回 ''。"""
-    docs = await writing_docs_of(uid, with_content=False)
+    docs = await writing_doc_metas(uid)
     for n in sorted(d.get("name", "") for d in docs):
         if not n.startswith(prefix):
             continue

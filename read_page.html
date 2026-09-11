@@ -151,6 +151,8 @@
   <main id="main"><div class="msg">载入中…</div></main>
 
 <script>
+const pad2 = (n) => String(n).padStart(2, "0");
+
 const TONES = {
   "暖黑":   { bg: "#171512", header: "rgba(23,21,18,0.82)",  ink: "#e9e2d3" },
   "墨绿":   { bg: "#141a16", header: "rgba(20,26,22,0.82)",  ink: "#e4e6d9" },
@@ -282,8 +284,7 @@ function renderNote(name, c) {
   const div = document.createElement("div");
   div.className = "note";
   const d = new Date(c.createdAt);
-  const p = (n) => String(n).padStart(2, "0");
-  const when = `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  const when = `${d.getMonth() + 1}/${d.getDate()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
   const head = document.createElement("div");
   head.className = "nt-head";
   head.textContent = `${c.author} · ${when}`;

@@ -1053,6 +1053,8 @@ if (storedPrefs.v !== PREFS_V) {
 }
 
 const $ = (id) => document.getElementById(id);
+const pad2 = (n) => String(n).padStart(2, "0");
+
 const editor = $("editor");
 
 /* ===== 阅读舒适度 ===== */
@@ -1469,8 +1471,7 @@ function noteLine(stamp, text) {
   return `<!-- 批注 ${stamp} | ${noteEncode(text)} -->`;
 }
 function noteStamp(d) {
-  const p = (x) => String(x).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
 function isNote(node) {
@@ -1602,15 +1603,13 @@ function renderActiveClock() {
   const h = Math.floor(totalSec / 3600);
   const m = Math.floor((totalSec % 3600) / 60);
   const s = totalSec % 60;
-  const p = (n) => String(n).padStart(2, "0");
-  $("activeClock").textContent = h > 0 ? `${p(h)}:${p(m)}:${p(s)}` : `${p(m)}:${p(s)}`;
+  $("activeClock").textContent = h > 0 ? `${pad2(h)}:${pad2(m)}:${pad2(s)}` : `${pad2(m)}:${pad2(s)}`;
   $("activeClock").classList.toggle("running", isTypingNow());
 }
 
 function localDate() {
   const d = new Date();
-  const p = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
 
 /* ===== 同步 ===== */
@@ -2019,8 +2018,7 @@ function buildInlineNote(c) {
   div.className = "note friend-note";
   div.contentEditable = "false";
   const d = new Date(c.createdAt);
-  const p = (n) => String(n).padStart(2, "0");
-  div.innerHTML = `<span class="in-head">${escapeHtml(c.author)} · ${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}</span>
+  div.innerHTML = `<span class="in-head">${escapeHtml(c.author)} · ${d.getMonth() + 1}/${d.getDate()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}</span>
     <span class="in-del" title="删除这条留言">×</span>
     <div class="in-text"></div>`;
   div.querySelector(".in-text").textContent = c.text;
@@ -2220,8 +2218,7 @@ async function save() {
       renderCounts();
       setTodayDelta(data.deltaCjk);
       const t = new Date();
-      const p = (n) => String(n).padStart(2, "0");
-      setSync(`已同步 ${p(t.getHours())}:${p(t.getMinutes())}`, "ok");
+      setSync(`已同步 ${pad2(t.getHours())}:${pad2(t.getMinutes())}`, "ok");
     } else if (data.conflict) {
       localStorage.setItem("writing_conflict_backup", content);
       setSync("电脑上有更新的版本，已重新加载（你的改动暂存在本机）", "err");
