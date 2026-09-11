@@ -2105,20 +2105,43 @@ function renderHighlights() {
   });
 }
 
+/** 把段落内的字符偏移区间换算成 Range。段落里可能已有高亮/删除线的 span，
+    所以要按文本节点逐个走，不能直接用 block.firstChild。 */
+function rangeInBlock(block, start, end) {
+  const r = document.createRange();
+  const walk = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+  let pos = 0, started = false, n;
+  while ((n = walk.nextNode())) {
+    const len = n.textContent.length;
+    if (!started && start <= pos + len) { r.setStart(n, start - pos); started = true; }
+    if (started && end <= pos + len) { r.setEnd(n, end - pos); return r; }
+    pos += len;
+  }
+  return null;
+}
+
 /** 给选区加/去删除线。直接改正文里的 ~~ 标记——位置即锚点，改稿不会丢。 */
 function applyStrike() {
   const spans = selectionSpans();
   $("hlPalette").classList.remove("open");
   if (spans.length === 0 || !current) return;
   if (current.readonly) { setSync("只读文件不能改", "err"); return; }
+  // 用 execCommand 而不是直接写 textContent：contenteditable 的原生撤销栈
+  // 只记录用户输入与 execCommand，任何程序化 DOM 写入都会把它清空。
+  const sel = document.getSelection();
   spans.forEach((span) => {
     const t = span.para, a = span.start, b = span.start + span.len;
     const wrapped = t.slice(Math.max(0, a - 2), a) === "~~" && t.slice(b, b + 2) === "~~";
-    span.block.textContent = wrapped
-      ? t.slice(0, a - 2) + t.slice(a, b) + t.slice(b + 2)   // 取消
-      : t.slice(0, a) + "~~" + t.slice(a, b) + "~~" + t.slice(b);
+    const from = wrapped ? a - 2 : a;
+    const to = wrapped ? b + 2 : b;
+    const text = wrapped ? t.slice(a, b) : "~~" + t.slice(a, b) + "~~";
+    const r = rangeInBlock(span.block, from, to);
+    if (!r) return;
+    sel.removeAllRanges();
+    sel.addRange(r);
+    document.execCommand("insertText", false, text);
   });
-  document.getSelection().removeAllRanges();
+  sel.removeAllRanges();
   reclassify();
   applyMarks();
   renderHighlights();
