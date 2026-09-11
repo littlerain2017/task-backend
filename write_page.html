@@ -2121,15 +2121,20 @@ function rangeInBlock(block, start, end) {
 }
 
 /** 清掉某段里与选区重叠的 ~~ 标记。从后往前处理，避免前面的改动移位后面的偏移。 */
-function clearStrikesIn(span) {
+function strikePairsIn(span) {
   const t = span.para, a = span.start, b = span.start + span.len;
-  const pairs = [];
+  const out = [];
   STRIKE_RE.lastIndex = 0;
   let m;
   while ((m = STRIKE_RE.exec(t))) {
     const s0 = m.index, e0 = m.index + m[0].length;
-    if (s0 < b && e0 > a) pairs.push({ s: s0, e: e0, inner: m[1] });
+    if (s0 < b && e0 > a) out.push({ s: s0, e: e0, inner: m[1] });
   }
+  return out;
+}
+
+function clearStrikesIn(span) {
+  const pairs = strikePairsIn(span);
   const sel = document.getSelection();
   pairs.reverse().forEach((pr) => {
     const r = rangeInBlock(span.block, pr.s, pr.e);
@@ -2151,16 +2156,18 @@ function applyStrike() {
   // 只记录用户输入与 execCommand，任何程序化 DOM 写入都会把它清空。
   const sel = document.getSelection();
   spans.forEach((span) => {
+    // 选区只要和已有删除线有**重叠**就视为取消。此前要求选区正好等于标记
+    // 内部的文字，连着淡灰的 ~~ 一起选中就会被判成「没划过」而再包一层，
+    // 于是生成 ~~~~文字~~~~ —— 正则匹配不上，标记就永远清不掉了。
+    if (strikePairsIn(span).length) { clearStrikesIn(span); return; }
     const t = span.para, a = span.start, b = span.start + span.len;
-    const wrapped = t.slice(Math.max(0, a - 2), a) === "~~" && t.slice(b, b + 2) === "~~";
-    const from = wrapped ? a - 2 : a;
-    const to = wrapped ? b + 2 : b;
-    const text = wrapped ? t.slice(a, b) : "~~" + t.slice(a, b) + "~~";
-    const r = rangeInBlock(span.block, from, to);
+    const inner = t.slice(a, b).replace(/~~+/g, "");   // 防止把残留标记包进去
+    if (!inner) return;
+    const r = rangeInBlock(span.block, a, b);
     if (!r) return;
     sel.removeAllRanges();
     sel.addRange(r);
-    document.execCommand("insertText", false, text);
+    document.execCommand("insertText", false, "~~" + inner + "~~");
   });
   sel.removeAllRanges();
   reclassify();
