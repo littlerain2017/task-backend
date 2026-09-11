@@ -964,14 +964,20 @@ let saveTimer = null;
 let serverActiveMs = 0;
 let pendingActiveMs = Number(localStorage.getItem("writing_pending_active") || 0);
 let lastKeyTs = 0;
-let prefs = Object.assign(
-  // 剧本口径：15px × 1.6 = 24px 行高，字幅 74ch，两侧 8ch，段距交给正文里的空行
-  { tone: "暖黑", fontSize: 15, measure: 74, tracking: 0,
-    leading: 1.6, paraGap: 0, side: 8, focus: true },
-  JSON.parse(localStorage.getItem("writing_prefs") || "{}")
-);
-// 旧版行宽以 px 存（600–960），新版以 ch 存（60–100）。一次性迁移。
-if (prefs.measure > 200) prefs.measure = 74;
+// 剧本口径：15px × 1.6 = 24px 行高，字幅 74ch，两侧 8ch，段距交给正文里的空行
+const PREFS_V = 2;
+const PREFS_TYPO = { fontSize: 15, measure: 74, tracking: 0, leading: 1.6, paraGap: 0, side: 8 };
+// 版本号必须在合并默认值**之前**读：旧存档没有 v 字段，先合并的话
+// 默认里的 v 会补进去，检查就永远不触发。
+const storedPrefs = JSON.parse(localStorage.getItem("writing_prefs") || "{}");
+let prefs = Object.assign({ tone: "暖黑", focus: true }, PREFS_TYPO, storedPrefs, { v: PREFS_V });
+// v1 存的是散文口径（19px / 行距 2.05 / 字距 0.05 / 段距 1.1em / 行宽 760px）。
+// 这些值全都落在新滑块范围内，靠数值分辨不出新旧，只能靠版本号一次性重置。
+// 色调与专注模式是个人偏好、与排版无关，保留。
+if (storedPrefs.v !== PREFS_V) {
+  Object.assign(prefs, PREFS_TYPO);
+  localStorage.setItem("writing_prefs", JSON.stringify(prefs));
+}
 
 const $ = (id) => document.getElementById(id);
 const editor = $("editor");
