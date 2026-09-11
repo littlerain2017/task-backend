@@ -2200,7 +2200,14 @@ async function refresh() {
 async function boot() {
   try {
     await loadList();
-    // 进门先看书架
+    // 回到上次写的地方。writing_last_doc 每次 openDoc 都在写，
+    // 此前启动时从不读它，于是刷新一律回书架。
+    const last = localStorage.getItem("writing_last_doc");
+    if (last && docList.some((d) => d.name === last)) {
+      await openDoc(last);
+      jumpToLastEdit();   // 光标也回到上次落笔处（lastEditPos 本就存在 localStorage）
+      return;
+    }
     renderShelfView();
     $("shelfView").classList.add("open");
     startCosmos();
