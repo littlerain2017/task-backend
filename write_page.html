@@ -53,11 +53,12 @@
   }
   .header-inner {
     width: 100%;
-    max-width: 860px;
+    max-width: 1040px;
     display: flex;
     align-items: center;
-    gap: 14px;
-    padding: 16px 24px;
+    flex-wrap: wrap;      /* 装不下时按钮换行，而不是把章节导航挤没 */
+    gap: 12px 14px;
+    padding: 14px 24px;
   }
   .wordmark {
     font-family: "Cormorant Garamond", Georgia, serif;
@@ -72,9 +73,10 @@
   .chap-bar {
     display: flex;
     align-items: stretch;
-    min-width: 0;
+    /* 必须给下限。原本是 flex:1（basis 0），顶栏一挤它就被压成 0 宽整条消失 */
+    flex: 1 1 240px;
+    min-width: 200px;
     max-width: 360px;
-    flex: 1;
     background: rgba(255, 255, 255, 0.035);
     border: 1px solid var(--line);
     border-radius: 8px;
@@ -139,7 +141,47 @@
     font-size: 10px;
     pointer-events: none;
   }
-  .actions { display: flex; gap: 8px; margin-left: auto; }
+  .actions {
+    display: flex;
+    gap: 8px;
+    margin-left: auto;
+    align-items: center;
+  }
+  /* 低频功能收进「⋯」。此前 10 个同等权重的按钮占掉 633px，
+     把 flex:1 的章节导航挤成 0 宽整条消失。 */
+  .more-wrap { position: relative; }
+  #moreMenu {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 40;
+    min-width: 148px;
+    background: var(--header);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--gold-line);
+    border-radius: 10px;
+    padding: 6px;
+    display: none;
+    flex-direction: column;
+    box-shadow: 0 18px 46px rgba(0, 0, 0, 0.5);
+  }
+  #moreMenu.open { display: flex; }
+  #moreMenu button {
+    font-family: inherit;
+    font-size: 13.5px;
+    text-align: left;
+    color: var(--ink-soft);
+    background: transparent;
+    border: none;
+    border-radius: 7px;
+    padding: 8px 11px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.18s, color 0.18s;
+  }
+  #moreMenu button:hover { background: rgba(211, 178, 92, 0.12); color: var(--gold-bright); }
+  #moreMenu hr { border: none; border-top: 1px solid var(--line); margin: 5px 8px; }
   .btn {
     font-family: inherit;
     font-size: 13.5px;
@@ -857,16 +899,23 @@
         <button class="cb-arrow next" id="nextDoc" onclick="gotoSibling(1)" title="下一章（⌘⇧&gt;）">›</button>
       </div>
       <div class="actions">
-        <button class="btn" id="modeBtn" onclick="toggleScriptMode()" title="剧本模式（Final Draft 格式）">剧本</button>
-        <button class="btn" onclick="newDoc()">新建</button>
-        <button class="btn" onclick="copyDoc()">复制</button>
         <button class="btn" onclick="addNote()" title="给当前段落写一条批注（⌘/）">批注</button>
         <button class="btn" onclick="toggleMark()" title="标记/取消标记当前段落（⌘M），⌘⇧M 跳转书签">标记</button>
-        <button class="btn" onclick="toggleMarksPanel()" title="查看全部书签">书签</button>
         <button class="btn" id="advisorBtn" onclick="toggleAdvisor()" title="科幻顾问：问设定 / 查冲突">顾问</button>
-        <button class="btn" onclick="shareBook()" title="把这本书只读分享给朋友，可留言">分享</button>
-        <button class="btn" onclick="editToken()">令牌</button>
-        <button class="btn" onclick="togglePrefs()" title="阅读舒适度（⌘D）">Aa</button>
+        <div class="more-wrap">
+          <button class="btn" onclick="toggleMore()" title="更多">⋯</button>
+          <div id="moreMenu">
+            <button onclick="runMore(toggleMarksPanel)">书签面板</button>
+            <button id="modeBtn" onclick="runMore(toggleScriptMode)">剧本模式</button>
+            <button onclick="runMore(togglePrefs)">阅读舒适度 ⌘D</button>
+            <hr>
+            <button onclick="runMore(newDoc)">新建章节</button>
+            <button onclick="runMore(copyDoc)">复制全文</button>
+            <button onclick="runMore(shareBook)">分享这本书</button>
+            <hr>
+            <button onclick="runMore(editToken)">令牌</button>
+          </div>
+        </div>
       </div>
     </div>
   </header>
@@ -1046,6 +1095,12 @@ function setPref(key, val) {
 }
 
 function togglePrefs() { $("prefs").classList.toggle("open"); }
+
+function toggleMore() { $("moreMenu").classList.toggle("open"); }
+function runMore(fn) { $("moreMenu").classList.remove("open"); fn(); }
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".more-wrap")) $("moreMenu").classList.remove("open");
+});
 
 // ⌘D（Windows 上 Ctrl+D）呼出/收起调整面板；⌘S 回到上次修改的地方并立即保存
 document.addEventListener("keydown", (e) => {
