@@ -2301,12 +2301,16 @@ async function shareBook() {
   }
 }
 
-editor.addEventListener("input", () => {
+editor.addEventListener("input", (e) => {
   dirty = true;
   trackTyping();
   rememberEditPos();
   reclassify();
   applyMarks();
+  // 撤销/重做只还原文字，而装饰 span（.strike / .hl）是 renderHighlights
+  // 程序化写进去的、不在撤销栈里——不重刷的话 span 会留在 DOM 上，
+  // 表现为文字回来了却一直发暗（.strike 带 opacity .5）。
+  if (e.inputType === "historyUndo" || e.inputType === "historyRedo") renderHighlights();
   renderCounts();
   setSync("编辑中…", "busy");
   clearTimeout(saveTimer);
