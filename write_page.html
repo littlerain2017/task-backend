@@ -489,6 +489,15 @@
     padding: 8px 10px 8px 16px;
   }
   .timer { padding: 8px 18px; }
+  .timer .t-seg { display: flex; align-items: center; gap: 10px; }
+  .timer .t-div { width: 1px; align-self: stretch; background: var(--line); margin: 0 2px; }
+  .timer .t-num {
+    font-size: 18px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+    color: #beb5a2;
+  }
   .timer .t-label {
     font-size: 12px;
     letter-spacing: 0.08em;
@@ -966,9 +975,16 @@
 
   <main id="editor" contenteditable="true" spellcheck="false"></main>
 
-  <div class="timer" title="今日实际打字时长，自动计时，停笔 1 分钟暂停">
-    <span class="t-label">写作时长</span>
-    <span class="clock" id="activeClock">00:00</span>
+  <div class="timer">
+    <span class="t-seg" title="本章净稿字数：不含批注，也不含已划删除线的内容">
+      <span class="t-label">本章净字</span>
+      <span class="t-num" id="netCount">0</span>
+    </span>
+    <span class="t-div"></span>
+    <span class="t-seg" title="今日实际打字时长，自动计时，停笔 1 分钟暂停">
+      <span class="t-label">写作时长</span>
+      <span class="clock" id="activeClock">00:00</span>
+    </span>
   </div>
 
   <div class="fade"></div>
@@ -1595,6 +1611,14 @@ function stripNotes(text) {
   return text.split("\n").filter((l) => !NOTE_RE.test(l)).join("\n");
 }
 
+/** 净稿字数：剥掉批注，再剥掉已划删除线的内容——那些是准备删的，不算成稿。
+    与右上角「今日 +N 字」口径不同：那个记的是写作产出，划掉的字仍然算数。 */
+function netCounts(text) {
+  STRIKE_RE.lastIndex = 0;
+  const t = stripNotes(text).replace(STRIKE_RE, "");
+  return { cjk: (t.match(CJK_RE) || []).length, en: (t.match(EN_RE) || []).length };
+}
+
 function counts(text) {
   const t = stripNotes(text);   // 批注不算写作字数
   return { cjk: (t.match(CJK_RE) || []).length, en: (t.match(EN_RE) || []).length };
@@ -1602,9 +1626,12 @@ function counts(text) {
 
 
 function renderCounts() {
-  const c = counts(getEditorContent());
+  const raw = getEditorContent();
+  const c = counts(raw);
   $("cjkCount").textContent = c.cjk.toLocaleString();
   $("enCount").textContent = c.en.toLocaleString();
+  const net = netCounts(raw);
+  $("netCount").textContent = (net.cjk + net.en).toLocaleString();
   renderActiveClock();
 }
 
