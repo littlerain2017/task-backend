@@ -16,6 +16,7 @@
     --gold: #d3b25c;
     --gold-bright: #e8cd85;
     --green: #7d9c6a;
+    --green-bright: #a3c48d;
     --red: #c96a5a;
     --line: rgba(233, 226, 211, 0.12);
     --gold-line: rgba(211, 178, 92, 0.18);
@@ -376,6 +377,42 @@
     content: "写点什么…";
     color: var(--muted);
   }
+
+  /* 回复按钮。放在 × 左边，所以 .my-note 的右内边距要比基类宽出一格 */
+  #editor .note.my-note { padding-right: 50px; }
+  #editor .note .in-reply {
+    position: absolute; right: 30px; top: 8px; color: var(--muted);
+    cursor: pointer; font-size: 13px; line-height: 1; user-select: none;
+  }
+  #editor .note.my-note .in-reply:hover { color: var(--gold-bright); }
+
+  /* ===== AI 写的批注：绿色 =====
+     作者鎏金 / AI 绿 / 朋友冷蓝，三方一眼分得开。
+     正文不可编辑，所以不给 :focus 描边，也不出「写点什么…」的占位。 */
+  #editor .note.my-note.ai-note {
+    border-left-color: var(--green);
+    background: rgba(125, 156, 106, 0.09);
+  }
+  #editor .note.my-note.ai-note .in-head { color: var(--green); }
+  #editor .note.my-note.ai-note .in-tick { color: var(--green); }
+  #editor .note.my-note.ai-note .in-tick:hover,
+  #editor .note.my-note.ai-note .in-reply:hover,
+  #editor .note.my-note.ai-note .in-del:hover { color: var(--green-bright); }
+  #editor .note.my-note.ai-note .in-text { cursor: default; }
+  #editor .note.my-note.ai-note .in-text:empty::before { content: none; }
+  /* 已处理的 AI 批注同样退成灰，跟作者批注一个口径 */
+  #editor .note.my-note.ai-note.done { border-left-color: var(--faint, #5f5849); }
+  #editor .note.my-note.ai-note.done .in-head,
+  #editor .note.my-note.ai-note.done .in-tick { color: var(--faint, #5f5849); }
+
+  /* ===== 对话组 =====
+     相邻的同号批注贴成一整块，中间用细线断开。谁说的靠颜色认，所以不缩进——
+     一组里金绿交替，比缩进更容易扫。 */
+  #editor .note.my-note.t-first { margin-bottom: 0; border-bottom-right-radius: 0; }
+  #editor .note.my-note.t-mid   { margin-top: 0; margin-bottom: 0; border-radius: 0; }
+  #editor .note.my-note.t-last  { margin-top: 0; border-top-right-radius: 0; }
+  #editor .note.my-note.t-mid,
+  #editor .note.my-note.t-last { border-top: 1px solid var(--line); }
 
   /* 标记一律用 CSS Custom Highlight API 绘制：给文字范围上样式，**完全不改 DOM**。
      此前是往段落里插 <span>，而任何程序化 DOM 写入都会清空 contenteditable
@@ -1492,7 +1529,7 @@ function setEditorContent(text) {
   const frag = document.createDocumentFragment();
   text.split("\n").forEach((lineText) => {
     const m = lineText.match(NOTE_RE);
-    if (m) { frag.appendChild(buildMyNote(m[2], noteDecode(m[3]), !!m[1])); return; }
+    if (m) { frag.appendChild(buildMyNote(m[4], noteDecode(m[5]), !!m[2], m[1] || "", m[3] || "")); return; }
     const div = document.createElement("div");
     div.className = ("line " + classify(lineText)).trim();
     if (lineText === "") div.appendChild(document.createElement("br"));
@@ -1512,10 +1549,22 @@ function setEditorContent(text) {
    批注就写在正文里，形如：
      <!-- 批注 2026-09-10 14:32 | 这里节奏太快 -->
    紧跟在被批注的段落之后——**位置就是锚点**，改段落文字也不会丢。
-   Markdown 渲染时不显示；写作字数统计会跳过（前端 counts / 后端 count_text 都剥掉）。 */
-// 已处理的批注在「批注」后多一个 ✓：<!-- 批注 ✓ 2026-09-10 13:14 | … -->
-// 分组：1=是否已处理 2=时间戳 3=正文
-const NOTE_RE = /^\s*<!--\s*批注\s*(✓)?\s*(.*?)\s*\|\s*([\s\S]*?)\s*-->\s*$/;
+   Markdown 渲染时不显示；写作字数统计会跳过（前端 counts / 后端 count_text 都剥掉）。
+
+   三个可选位，每个都有自己的前缀符号，所以顺序固定、互不吃字：
+     @who   谁写的。省略＝作者自己（鎏金）；@claude＝AI（绿色）
+     ✓      已处理
+     #tid   线程号。同号且**相邻**的若干条渲染成一组对话
+
+   一条回复＝一个独立节点＝文件里一行。绝不做成「一个节点吐多行」——
+   getEditorContent() 按节点逐个序列化，那样改会让保存丢数据（见 CLAUDE.md）。
+
+     <!-- 批注 @claude #7f3a 2026-09-14 10:30 | 这段节奏太快 -->
+     <!-- 批注 #7f3a 2026-09-14 10:35 | 我觉得还行，保留 -->
+*/
+// 分组：1=@谁 2=是否已处理 3=线程号 4=时间戳 5=正文
+const NOTE_RE = /^\s*<!--\s*批注\s*(@\S+)?\s*(✓)?\s*(?:#([0-9a-z]{4,8}))?\s*(.*?)\s*\|\s*([\s\S]*?)\s*-->\s*$/;
+const AI_WHO = "@claude";
 
 function noteEncode(t) {
   return t.replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/-->/g, "--\\>");
@@ -1523,8 +1572,13 @@ function noteEncode(t) {
 function noteDecode(t) {
   return t.replace(/\\(n|\\|>)/g, (m, c) => (c === "n" ? "\n" : c === "\\" ? "\\" : ">"));
 }
-function noteLine(stamp, text, done) {
-  return `<!-- 批注 ${done ? "✓ " : ""}${stamp} | ${noteEncode(text)} -->`;
+function noteLine(stamp, text, done, who, tid) {
+  return `<!-- 批注 ${who ? who + " " : ""}${done ? "✓ " : ""}${tid ? "#" + tid + " " : ""}${stamp} | ${noteEncode(text)} -->`;
+}
+/** 线程号：4 位 36 进制，够用且短。只在第一次回复时才生成——
+    单条批注不占号，文件里就不会多出一堆没用的 #xxxx。 */
+function newTid() {
+  return Math.random().toString(36).slice(2, 6);
 }
 function noteStamp(d) {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
@@ -1543,7 +1597,8 @@ function getEditorContent() {
         const t = node.querySelector(".in-text");
         const body = t ? t.innerText.trim() : "";
         if (body) lines.push(noteLine(node.dataset.stamp || "", body,
-                                     node.classList.contains("done")));
+                                     node.classList.contains("done"),
+                                     node.dataset.who || "", node.dataset.tid || ""));
       }
       return;
     }
@@ -1569,6 +1624,7 @@ function reclassify() {
     const keepDim = node.classList.contains("dim") ? " dim" : "";
     if (node.className !== cls + keepDim) node.className = cls + keepDim;
   });
+  groupThreads();   // 上面只动正文节点；批注的对话分组在这里一并刷新
   if (script) updatePageInfo();
 }
 
@@ -2002,21 +2058,27 @@ async function openDoc(name) {
   reclassify();
   applyMarks();
   renderHighlights();
-  if (pruneHighlights()) { renderHighlights(); persistHighlights(); }  // 清理已被改动的段落上的失效高亮
+  // 高亮的锚点由 renderHighlights() 自己重新定位并自愈，这里不再做清理
   renderCounts();
   renderSelect();
   setSync(data.readonly ? "只读（Word 文档请在电脑上编辑）" : "已就绪", "ok");
   loadComments(name);
 }
 
-/* ===== 作者自己的批注（鎏金，写进正文的 HTML 注释里；位置即锚点） ===== */
-function buildMyNote(stamp, text, done) {
+/* ===== 写进正文的批注（作者鎏金 / AI 绿色；位置即锚点） =====
+   who 为空＝作者自己写的，可改正文；who=@claude＝AI 写的，正文只读但可勾选／删除／回复。
+   tid 相同且相邻的若干条，由 groupThreads() 连成一组对话。 */
+function buildMyNote(stamp, text, done, who, tid) {
+  const ai = who === AI_WHO;
   const div = document.createElement("div");
-  div.className = "note my-note" + (done ? " done" : "");
+  div.className = "note my-note" + (ai ? " ai-note" : "") + (done ? " done" : "");
   div.contentEditable = "false";          // 外壳不可编辑，只有 .in-text 是编辑岛
   div.dataset.stamp = stamp || noteStamp(new Date());
+  if (who) div.dataset.who = who;
+  if (tid) div.dataset.tid = tid;
   div.innerHTML = `<span class="in-tick" title="标记为已处理／未处理">${done ? "✓" : "○"}</span>
-    <span class="in-head">批注 · ${escapeHtml(div.dataset.stamp)}</span>
+    <span class="in-head">${ai ? "Claude" : "批注"} · ${escapeHtml(div.dataset.stamp)}</span>
+    <span class="in-reply" title="回复这条批注">↩</span>
     <span class="in-del" title="删除这条批注">×</span>
     <div class="in-text"></div>`;
 
@@ -2027,9 +2089,24 @@ function buildMyNote(stamp, text, done) {
     save();
     setSync(on ? "已标记为处理完" : "已标回待处理", "ok");
   };
+  div.querySelector(".in-reply").onclick = () => replyToNote(div);
 
   const txt = div.querySelector(".in-text");
   txt.textContent = text || "";
+  // AI 写的那条正文只读——她要改就改自己的回复，不该悄悄改掉对方说过的话。
+  // 只读也意味着下面那套「空了就删」的 blur 逻辑对它没有意义，直接返回。
+  if (ai) {
+    txt.contentEditable = "false";
+    div.querySelector(".in-del").onclick = () => {
+      noteDeletes++;
+      div.remove();
+      dirty = true;
+      groupThreads();
+      renderCounts();
+      save();
+    };
+    return div;
+  }
   txt.contentEditable = "true";
 
   // 批注是正文的一部分，所以输入照常走编辑器那条流水线（标脏 + 防抖保存 +
@@ -2056,6 +2133,7 @@ function buildMyNote(stamp, text, done) {
       noteDeletes++;
       div.remove();
       dirty = true;
+      groupThreads();
       renderCounts();
       save();
       return;
@@ -2066,6 +2144,7 @@ function buildMyNote(stamp, text, done) {
       if (document.activeElement === txt) return;
       div.remove();
       dirty = true;
+      groupThreads();
       renderCounts();
       save();
       setSync("空批注已丢弃", "");
@@ -2076,6 +2155,7 @@ function buildMyNote(stamp, text, done) {
     noteDeletes++;
     div.remove();
     dirty = true;
+    groupThreads();
     renderCounts();
     save();
   };
@@ -2087,12 +2167,46 @@ function addNote() {
   if (current.readonly) { setSync("只读文件不能加批注", "err"); return; }
   const block = caretBlock();
   if (!block) { setSync("先把光标放到要批注的段落里", ""); return; }
-  const div = buildMyNote(noteStamp(new Date()), "");
+  const div = buildMyNote(noteStamp(new Date()), "", false, "", "");
   block.after(div);
   const txt = div.querySelector(".in-text");
   txt.focus();
   dirty = true;
   setSync("编辑中…", "busy");
+}
+
+/** 回复一条批注：在该线程**末尾**追加一条空批注，共享同一个 #tid。
+    线程号是懒生成的——被回复的那条原先可能没有号，这时才补一个。 */
+function replyToNote(div) {
+  if (!current || current.readonly) { setSync("只读文件不能加批注", "err"); return; }
+  let tid = div.dataset.tid;
+  if (!tid) { tid = newTid(); div.dataset.tid = tid; }
+  let last = div;                         // 顺着相邻的同号批注走到这一组的最后
+  while (last.nextSibling && isNote(last.nextSibling) &&
+         last.nextSibling.dataset.tid === tid) last = last.nextSibling;
+  const reply = buildMyNote(noteStamp(new Date()), "", false, "", tid);
+  last.after(reply);
+  groupThreads();
+  reply.querySelector(".in-text").focus();
+  dirty = true;
+  setSync("编辑中…", "busy");
+}
+
+/** 给相邻的同号批注打上首／中／末标记，CSS 据此把它们连成一组对话。
+    纯加类名，不动节点结构——序列化和批注计数护栏都看不见它。 */
+function groupThreads() {
+  const kids = Array.prototype.filter.call(editor.childNodes,
+    (n) => n.nodeType === Node.ELEMENT_NODE);
+  kids.forEach((n, i) => {
+    n.classList.remove("t-first", "t-mid", "t-last");
+    const tid = n.dataset && n.dataset.tid;
+    if (!tid || !n.classList.contains("my-note")) return;
+    const same = (k) => k && k.classList && k.classList.contains("my-note") && k.dataset.tid === tid;
+    const prev = same(kids[i - 1]), next = same(kids[i + 1]);
+    if (!prev && next) n.classList.add("t-first");
+    else if (prev && next) n.classList.add("t-mid");
+    else if (prev && !next) n.classList.add("t-last");
+  });
 }
 
 /* ===== 朋友的留言（编辑器内联展示，冷蓝色，作者可删） ===== */
@@ -2143,6 +2257,49 @@ const STRIKE_RE = /~~([^~\n]+)~~/g;
 const HL_LAYERS = HL_COLORS.map((c) => "hl-" + c);
 const MARK_LAYERS = HL_LAYERS.concat(["strike", "mk"]);
 
+/** 段落序号。口径必须和 renderHighlights 里 blocks 的编号一致——
+    都跳过批注和空行，否则自愈时的「离原位置最近」会算歪。 */
+function blockIndex(block) {
+  let i = 0;
+  for (const node of editor.childNodes) {
+    if (node.nodeType !== Node.ELEMENT_NODE || isNote(node) || !node.textContent) continue;
+    if (node === block) return i;
+    i++;
+  }
+  return -1;
+}
+
+/** 把一条高亮重新锚到当前文本上，返回 {b, start} 或 null。
+
+    锚点原先只有「段落全文」一个，段落一改就对不上，标记当场消失、还会被
+    清理掉——边写边标根本没法用。现在多存一份 h.text（高亮的文字本身），
+    全文对不上时就靠它找回来，找到后由调用方把锚点就地更新（自愈）。 */
+function relocateHighlight(h, blocks) {
+  const text = h.text || (h.para || "").slice(h.start, h.start + h.len);
+  if (!text) return null;
+  const idx = typeof h.idx === "number" ? h.idx : -1;
+  const near = (x) => Math.abs(x.b.i - idx) * 1e6 + Math.abs(x.start - h.start);
+
+  // 快路径：还有段落和当初一模一样，且那个位置上确实是这段文字
+  const exact = blocks.filter((b) => b.text === h.para
+    && b.text.slice(h.start, h.start + h.len) === text);
+  if (exact.length) {
+    const pick = exact.length === 1 ? exact[0]
+      : exact.reduce((a, b) => (Math.abs(b.i - idx) < Math.abs(a.i - idx) ? b : a));
+    return { b: pick, start: h.start };
+  }
+
+  // 慢路径：段落被改过了，按文字本身找。多处命中时取离原位置最近的那处，
+  // 免得标记突然跳到文档另一头去。
+  const hits = [];
+  blocks.forEach((b) => {
+    let from = 0, at;
+    while ((at = b.text.indexOf(text, from)) !== -1) { hits.push({ b, start: at }); from = at + 1; }
+  });
+  if (!hits.length) return null;                // 找不到就先不画，但记录保留着
+  return hits.reduce((a, c) => (near(c) < near(a) ? c : a));
+}
+
 /** 重画全部标记。用 CSS Custom Highlight API——零 DOM 改动，撤销栈完好。 */
 function renderHighlights() {
   if (!window.CSS || !CSS.highlights) return;   // 不支持就只是不显示标记，正文不受影响
@@ -2153,15 +2310,12 @@ function renderHighlights() {
     if (r) bucket[layer].push(r);
   };
 
-  const byPara = {};
-  ((current && current.highlights) || []).forEach(
-    (h) => (byPara[h.para] = byPara[h.para] || []).push(h));
-
+  // 先过一遍正文：收集段落，顺带把写在正文里的删除线画掉
+  const blocks = [];
   editor.childNodes.forEach((node) => {
     if (node.nodeType !== Node.ELEMENT_NODE || isNote(node)) return;
     const text = node.textContent;
     if (!text) return;
-
     const strikes = [];
     STRIKE_RE.lastIndex = 0;
     let m;
@@ -2172,16 +2326,28 @@ function renderHighlights() {
       add("mk", node, b - 2, b);
       add("strike", node, a + 2, b - 2);
     }
-    const inStrike = (i) => strikes.some(([a, b]) => i >= a && i < b);
-
-    (byPara[text] || []).forEach((h) => {
-      if (!HL_COLORS.includes(h.color)) return;
-      if (h.len <= 0 || h.start < 0 || h.start + h.len > text.length) return;
-      // 划掉的文字不再叠加高亮——两个标记压在一起读不清
-      if (inStrike(h.start) || inStrike(h.start + h.len - 1)) return;
-      add("hl-" + h.color, node, h.start, h.start + h.len);
-    });
+    blocks.push({ node, text, i: blocks.length, strikes });
   });
+
+  // 再逐条高亮重新定位。锚点变了就地改掉，攒够一轮统一存。
+  let moved = false;
+  ((current && current.highlights) || []).forEach((h) => {
+    if (!HL_COLORS.includes(h.color) || h.len <= 0) return;
+    const hit = relocateHighlight(h, blocks);
+    if (!hit) return;
+    const { b, start } = hit;
+    if (start < 0 || start + h.len > b.text.length) return;
+    // 划掉的文字不再叠加高亮——两个标记压在一起读不清
+    const inStrike = (i) => b.strikes.some(([x, y]) => i >= x && i < y);
+    if (inStrike(start) || inStrike(start + h.len - 1)) return;
+    add("hl-" + h.color, b.node, start, start + h.len);
+    if (h.para !== b.text || h.start !== start || h.idx !== b.i) {
+      h.para = b.text; h.start = start; h.idx = b.i;
+      h.text = h.text || b.text.slice(start, start + h.len);
+      moved = true;
+    }
+  });
+  if (moved) persistHighlightsSoon();
 
   MARK_LAYERS.forEach((n) => {
     if (bucket[n].length) CSS.highlights.set(n, new Highlight(...bucket[n]));
@@ -2315,6 +2481,14 @@ function persistHighlights() {
     .catch(() => setSync("高亮保存失败，稍后自动重试", "err"));
 }
 
+/** 锚点自愈是在 renderHighlights 里发生的，而它每次按键都跑一遍。
+    这里防抖，免得打一个字就发一次请求。 */
+let hlPersistTimer = null;
+function persistHighlightsSoon() {
+  clearTimeout(hlPersistTimer);
+  hlPersistTimer = setTimeout(() => { if (current && !current.readonly) persistHighlights(); }, 1500);
+}
+
 function applyHighlight(color) {
   const spans = selectionSpans();
   $("hlPalette").classList.remove("open");
@@ -2333,7 +2507,12 @@ function applyHighlight(color) {
       // 先去掉同段完全被覆盖的旧高亮，再加新的
       current.highlights = current.highlights.filter((h) =>
         !(h.para === span.para && h.start >= a && h.start + h.len <= b));
-      current.highlights.push({ para: span.para, start: span.start, len: span.len, color });
+      // text 和 idx 是重新定位用的：段落被改之后，靠这两样把标记找回来
+      current.highlights.push({
+        para: span.para, start: span.start, len: span.len, color,
+        text: span.para.slice(span.start, span.start + span.len),
+        idx: blockIndex(span.block),
+      });
     }
   });
 
@@ -2349,15 +2528,11 @@ function applyHighlight(color) {
   }
 }
 
-// 编辑后清理锚定失效（段落被改动）的高亮
-function pruneHighlights() {
-  if (!current || !current.highlights || current.highlights.length === 0) return false;
-  const paras = new Set();
-  editor.childNodes.forEach((n) => { if (n.nodeType === Node.ELEMENT_NODE && !isNote(n)) paras.add(n.textContent); });
-  const before = current.highlights.length;
-  current.highlights = current.highlights.filter((h) => paras.has(h.para));
-  return current.highlights.length !== before;
-}
+// 这里原先有个 pruneHighlights()：打开文档时把「段落全文对不上」的高亮
+// 直接删掉并写回云端。它是「改一个字标记就永久消失」的真凶——失配的原因
+// 通常只是你改了那一段，而不是标记该没了。现在 renderHighlights 会重新
+// 定位并自愈，这个函数就只剩丢数据一个作用，删了。
+// 记录确实作废时（文字整段被删光）也只是留着不画，由后端 1000 条上限兜底。
 
 $("hlPalette").addEventListener("mousedown", (e) => {
   const el = e.target.closest("[data-c]");
