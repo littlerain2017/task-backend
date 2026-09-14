@@ -1067,6 +1067,9 @@ const CJK_RE = /[一-鿿]/g;
 const EN_RE = /[A-Za-z]+(?:'[A-Za-z]+)?/g;
 const SAVE_DEBOUNCE_MS = 4000;
 const REFRESH_MS = 20000;
+// 新建的空批注失焦后的宽限期。输入法没上屏、切窗口、误触都会让 .in-text
+// 瞬间失焦且内容为空——立刻删就是用户看到的「加批注突然被取消」。
+const EMPTY_NOTE_GRACE_MS = 8000;
 const TYPING_IDLE_MS = 5000;  // 停笔 5 秒计时即暂停（句内停顿不断流）
 
 const TONES = {
@@ -2035,13 +2038,38 @@ function buildMyNote(stamp, text, done) {
     e.stopPropagation();                  // 别让 ⌘/ ⌘M 在批注里误触发
     if (e.key === "Escape") txt.blur();
   });
+  // 空批注要分两种情况，不能一律立刻删：
+  //   原本有内容被清空 = 明确的删除意图，立即生效；
+  //   刚建出来还没输入 = 可能只是输入法没上屏、切了窗口或误触，给一段宽限，
+  //   期间重新聚焦或打出字就取消。以前两种都立刻删，于是「加批注突然被取消」。
+  let dropTimer = null;
+  let composing = false;
+  txt.addEventListener("compositionstart", () => {
+    composing = true;                     // 中文输入法候选期间 innerText 仍是空的
+    clearTimeout(dropTimer);
+  });
+  txt.addEventListener("compositionend", () => { composing = false; });
+  txt.addEventListener("focus", () => { clearTimeout(dropTimer); dropTimer = null; });
   txt.addEventListener("blur", () => {
-    if (!txt.innerText.trim()) {          // 空批注不留
-      if (text) noteDeletes++;            // 原本有内容，算一次主动删除
+    if (txt.innerText.trim() || composing) return;
+    if (text) {                           // 原本有内容，算一次主动删除
+      noteDeletes++;
       div.remove();
       dirty = true;
+      renderCounts();
       save();
+      return;
     }
+    clearTimeout(dropTimer);
+    dropTimer = setTimeout(() => {        // 宽限期满仍是空的，才真的丢
+      if (!div.isConnected || txt.innerText.trim()) return;
+      if (document.activeElement === txt) return;
+      div.remove();
+      dirty = true;
+      renderCounts();
+      save();
+      setSync("空批注已丢弃", "");
+    }, EMPTY_NOTE_GRACE_MS);
   });
 
   div.querySelector(".in-del").onclick = () => {
@@ -2370,6 +2398,81 @@ editor.addEventListener("input", (e) => {
   saveTimer = setTimeout(save, SAVE_DEBOUNCE_MS);
 });
 
+/* ===== 写入冲突：先抢救批注，抢救不了再备份 =====
+   冲突的典型场景是「电脑上改了正文，网页上加了批注」——两边动的根本不是
+   同一处。批注是独立的整行，锚点是它上面那行正文，所以能按锚点合并回去。
+   以前这里直接 openDoc 重载，屏幕上刚写的批注就这么没了，只留一行会被
+   下一次 setSync 覆盖的提示。 */
+function mergeNotes(mine, theirs) {
+  const myLines = mine.split("\n");
+  const theirLines = theirs.split("\n");
+  const theirNotes = new Set(theirLines.filter((l) => NOTE_RE.test(l)).map((l) => l.trim()));
+  const pending = [];
+  let anchor = null;
+  myLines.forEach((l) => {
+    if (NOTE_RE.test(l)) {
+      if (!theirNotes.has(l.trim())) pending.push({ anchor, note: l });
+    } else if (l.trim()) {
+      anchor = l;                        // 锚点＝批注上面最近的一行正文
+    }
+  });
+  if (!pending.length) return { text: theirs, merged: 0, orphans: 0 };
+  const out = theirLines.slice();
+  let merged = 0;
+  const orphans = [];
+  pending.forEach(({ anchor: a, note }) => {
+    const idx = a === null ? -1 : out.indexOf(a);
+    if (idx >= 0) { out.splice(idx + 1, 0, "", note); merged++; }
+    else orphans.push(note);             // 锚点那段正文在电脑上被改过，找不回原位
+  });
+  if (orphans.length) out.push("", "<!-- 以下批注的原段落已在电脑上改动，暂放文末 -->", ...orphans);
+  return { text: out.join("\n"), merged, orphans: orphans.length };
+}
+
+function backupConflict(content) {
+  try {
+    const list = JSON.parse(localStorage.getItem("writing_conflict_backups") || "[]");
+    list.unshift({ at: Date.now(), name: (current && current.name) || "", content });
+    localStorage.setItem("writing_conflict_backups", JSON.stringify(list.slice(0, 5)));
+  } catch (e) { /* 存储满了就算了，至少别挡住保存流程 */ }
+}
+// 控制台里捞回来：restoreConflictBackup() 看列表，restoreConflictBackup(0) 取最近一份
+window.restoreConflictBackup = function (i) {
+  const list = JSON.parse(localStorage.getItem("writing_conflict_backups") || "[]");
+  if (i === undefined) return list.map((b, n) => `${n}: ${new Date(b.at).toLocaleString()} · ${b.name}`);
+  return list[i] ? list[i].content : null;
+};
+
+async function rescueNotesOnConflict(mine) {
+  try {
+    const fresh = await api("/writing/docs/get", { name: current.name });
+    if (!fresh.ok) return false;
+    const { text, merged, orphans } = mergeNotes(mine, fresh.content);
+    if (!merged && !orphans) return false;      // 没有只在这边存在的批注，走原路径
+    const put = await api("/writing/docs/put", {
+      name: current.name, content: text, editor: "web",
+      date: localDate(), baseUpdatedAt: fresh.updatedAt, activeMs: 0,
+    });
+    if (!put.ok) return false;                  // 又被抢先一步，交回去备份
+    dirty = false;
+    noteDeletes = 0;
+    current.updatedAt = put.updatedAt;
+    current.baseContent = text;
+    setEditorContent(text);
+    reclassify();
+    applyMarks();
+    renderHighlights();
+    renderCounts();
+    loadComments(current.name);
+    setSync(orphans
+      ? `电脑上有更新，已合并你的 ${merged + orphans} 条批注（${orphans} 条原段落已改，放在文末）`
+      : `电脑上有更新，已保住你的 ${merged} 条批注`, "ok");
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
 async function save() {
   if (!current || current.readonly || !dirty) return;
   const content = getEditorContent();
@@ -2403,8 +2506,9 @@ async function save() {
       const t = new Date();
       setSync(`已同步 ${pad2(t.getHours())}:${pad2(t.getMinutes())}`, "ok");
     } else if (data.conflict) {
-      localStorage.setItem("writing_conflict_backup", content);
-      setSync("电脑上有更新的版本，已重新加载（你的改动暂存在本机）", "err");
+      backupConflict(content);                 // 先留底，再谈抢救
+      if (await rescueNotesOnConflict(content)) return;
+      setSync("电脑上有更新的版本，已重新加载（你这份已备份，控制台 restoreConflictBackup(0) 可取回）", "err");
       dirty = false;
       await openDoc(current.name);
     } else {
