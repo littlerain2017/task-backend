@@ -994,9 +994,11 @@ async def scifi_advisor(req: ScifiAdvisorRequest):
 
 
 # ==================== 参考顾问（Kimi / Moonshot） ====================
-# 与科幻顾问的区别：不读 canon，正文由前端传上来，所以任何书、任何文档都能用。
+# 正文由前端传上来，所以任何书、任何文档都能用。
+# 这本书有 00_ 设定就一并读进去当背景（顾问才知道整本在做什么主题），没有也照常工作。
 
 REF_TEXT_LIMIT = 12000   # 超出部分截掉：找参考不需要读完整章，且要控住延迟与成本
+REF_CANON_LIMIT = 6000   # 背景只用来定位主题，不需要全文
 
 
 class RefAdvisorRequest(BaseModel):
@@ -1004,10 +1006,19 @@ class RefAdvisorRequest(BaseModel):
     mode: str = "find"       # find=给稿子找参考 / stuck=卡住了求解法
     question: str = ""       # stuck 模式必填：卡在哪
     text: str = ""           # 选中的段落，或整篇正文
-    name: str = ""           # 当前文档名，仅用于告诉顾问在写哪本书
+    name: str = ""           # 当前文档名，用于定位这本书的 00_ 设定
 
 
-REF_FIND_TEMPLATE = """作者正在写{where}。下面是她要你看的文字：
+REF_CANON_BLOCK = """
+这本书的设定（{canon_name}，只用来让你知道整本在做什么，**不要拿它当稿件评**）：
+<背景>
+{canon}
+</背景>
+"""
+
+REF_FIND_TEMPLATE = """作者正在写{where}。
+{canon_block}
+下面是她要你看的文字：
 
 <稿件>
 {text}
@@ -1015,12 +1026,15 @@ REF_FIND_TEMPLATE = """作者正在写{where}。下面是她要你看的文字�
 
 按你的「找参考」流程回答：先一句话说这段在处理什么难题，再给 2-4 部处理过**同类难题**的作品。
 
+注意：**参考要针对这一段的难题，不是针对整本书的题材。**有背景时，用它判断这段在
+整本书里承担什么——但举的作品必须对准这一段正在解决的写作问题。
+
 记住：难题匹配 > 题材匹配。每部必须说清它**具体**怎么破的——落到一场戏、一个手法。
 把握不准的标【凭印象】，不确定的直接别写。最后一句说哪部最值得先看。
 """
 
 REF_STUCK_TEMPLATE = """作者正在写{where}，卡住了。
-
+{canon_block}
 她卡的地方：
 {question}
 {text_block}
@@ -1047,16 +1061,32 @@ async def reference_advisor(req: RefAdvisorRequest):
     book = advisor_book_prefix(name).rstrip("/") or "根书架"
     where = f"《{book}》里的 {name}" if name else "一篇还没归档的稿子"
 
+    # 这本书的 00_ 设定当背景。读不到就空着——参考顾问不像科幻顾问那样依赖它。
+    canon_block, canon_name = "", ""
+    try:
+        canon_name = await advisor_find_doc(uid, advisor_book_prefix(name), CANON_PREFIX)
+        canon = (await advisor_doc_text(uid, canon_name)).strip()[:REF_CANON_LIMIT]
+        if canon:
+            canon_block = REF_CANON_BLOCK.format(canon_name=canon_name, canon=canon)
+        else:
+            canon_name = ""
+    except (RuntimeError, ValueError, OSError) as e:
+        print(f"[ref] 读取《{book}》设定失败，按无背景继续: {e}")
+        canon_name = ""
+
     if mode == "find":
         if not text:
             return {"ok": False, "error": "先在正文里选中一段，或打开一篇有内容的文档"}
-        user_msg = REF_FIND_TEMPLATE.format(where=where, text=text)
+        user_msg = REF_FIND_TEMPLATE.format(
+            where=where, canon_block=canon_block, text=text,
+        )
     else:
         if not question:
             return {"ok": False, "error": "先说说你卡在哪"}
         text_block = f"\n相关的稿件：\n<稿件>\n{text}\n</稿件>\n" if text else ""
         user_msg = REF_STUCK_TEMPLATE.format(
-            where=where, question=question, text_block=text_block,
+            where=where, canon_block=canon_block,
+            question=question, text_block=text_block,
         )
 
     try:
@@ -1075,4 +1105,4 @@ async def reference_advisor(req: RefAdvisorRequest):
         return {"ok": False, "error": "Kimi 返回了空内容"}
 
     return {"ok": True, "mode": mode, "answer": answer,
-            "book": book, "chars": len(text)}
+            "book": book, "chars": len(text), "canon": canon_name}

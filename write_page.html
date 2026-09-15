@@ -2964,7 +2964,8 @@ async function runRef(mode) {
     } else {
       out.innerHTML = advisorRender(data.answer);
       $("refHint").textContent =
-        `依据《${data.book}》· ${picked ? "选中段落" : "整篇"} ${data.chars} 字`;
+        `依据《${data.book}》· ${picked ? "选中段落" : "整篇"} ${data.chars} 字` +
+        (data.canon ? ` · 背景 ${data.canon}` : " · 这本书没有 00_ 设定，没带背景");
     }
   } catch (e) {
     out.innerHTML = '<span class="ad-err">网络错误：' + e.message + "</span>";
