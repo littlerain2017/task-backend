@@ -643,7 +643,7 @@
   #marksPanel .mp-empty { color: var(--muted); text-align: center; padding: 24px 8px; line-height: 1.9; }
 
   /* ===== 科幻顾问面板 ===== */
-  #advisorPanel {
+  .ad-panel {
     position: fixed;
     top: 64px;
     right: 16px;
@@ -660,8 +660,8 @@
     flex-direction: column;
     font-size: 13px;
   }
-  #advisorPanel.open { display: flex; }
-  #advisorPanel .ad-head {
+  .ad-panel.open { display: flex; }
+  .ad-panel .ad-head {
     display: flex;
     align-items: center;
     gap: 8px;
@@ -669,13 +669,13 @@
     border-bottom: 1px solid var(--line);
     flex-shrink: 0;
   }
-  #advisorPanel .ad-title {
+  .ad-panel .ad-title {
     font-size: 12px;
     letter-spacing: 0.08em;
     color: var(--gold);
     flex: 1;
   }
-  #advisorPanel .ad-x {
+  .ad-panel .ad-x {
     background: none;
     border: none;
     color: var(--muted);
@@ -684,9 +684,9 @@
     line-height: 1;
     padding: 2px 4px;
   }
-  #advisorPanel .ad-x:hover { color: var(--ink); }
-  #advisorPanel .ad-body { padding: 12px 14px; overflow-y: auto; flex: 1; }
-  #advisorPanel textarea {
+  .ad-panel .ad-x:hover { color: var(--ink); }
+  .ad-panel .ad-body { padding: 12px 14px; overflow-y: auto; flex: 1; }
+  .ad-panel textarea {
     width: 100%;
     box-sizing: border-box;
     min-height: 62px;
@@ -700,10 +700,10 @@
     line-height: 1.65;
     outline: none;
   }
-  #advisorPanel textarea:focus { border-color: var(--gold-line); }
-  #advisorPanel textarea::placeholder { color: var(--muted); }
-  #advisorPanel .ad-row { display: flex; gap: 8px; margin-top: 10px; }
-  #advisorPanel .ad-go {
+  .ad-panel textarea:focus { border-color: var(--gold-line); }
+  .ad-panel textarea::placeholder { color: var(--muted); }
+  .ad-panel .ad-row { display: flex; gap: 8px; margin-top: 10px; }
+  .ad-panel .ad-go {
     flex: 1;
     background: rgba(211, 178, 92, 0.14);
     border: 1px solid var(--gold-line);
@@ -715,15 +715,15 @@
     letter-spacing: 0.04em;
     transition: background 140ms ease;
   }
-  #advisorPanel .ad-go:hover:not(:disabled) { background: rgba(211, 178, 92, 0.24); }
-  #advisorPanel .ad-go:disabled { opacity: 0.45; cursor: default; }
-  #advisorPanel .ad-hint {
+  .ad-panel .ad-go:hover:not(:disabled) { background: rgba(211, 178, 92, 0.24); }
+  .ad-panel .ad-go:disabled { opacity: 0.45; cursor: default; }
+  .ad-panel .ad-hint {
     color: var(--muted);
     font-size: 11.5px;
     line-height: 1.75;
     margin-top: 9px;
   }
-  #advisorPanel .ad-out {
+  .ad-panel .ad-out {
     margin-top: 14px;
     padding-top: 13px;
     border-top: 1px solid var(--line);
@@ -732,18 +732,18 @@
     white-space: pre-wrap;
     word-break: break-word;
   }
-  #advisorPanel .ad-out:empty { display: none; }
-  #advisorPanel .ad-out h3 {
+  .ad-panel .ad-out:empty { display: none; }
+  .ad-panel .ad-out h3 {
     color: var(--gold);
     font-size: 12px;
     letter-spacing: 0.07em;
     margin: 15px 0 5px;
     font-weight: 600;
   }
-  #advisorPanel .ad-out h3:first-child { margin-top: 0; }
-  #advisorPanel .ad-out strong { color: var(--ink); font-weight: 600; }
-  #advisorPanel .ad-err { color: var(--red); }
-  #advisorPanel .ad-wait { color: var(--muted); font-style: italic; }
+  .ad-panel .ad-out h3:first-child { margin-top: 0; }
+  .ad-panel .ad-out strong { color: var(--ink); font-weight: 600; }
+  .ad-panel .ad-err { color: var(--red); }
+  .ad-panel .ad-wait { color: var(--muted); font-style: italic; }
 
   /* ===== 书架（全屏入口） ===== */
   #shelfView {
@@ -979,6 +979,7 @@
         <button class="btn" onclick="addNote()" title="给当前段落写一条批注（⌘/）">批注</button>
         <button class="btn" onclick="toggleMark()" title="标记/取消标记当前段落（⌘M），⌘⇧M 跳转书签">标记</button>
         <button class="btn" id="advisorBtn" onclick="toggleAdvisor()" title="科幻顾问：问设定 / 查冲突">顾问</button>
+        <button class="btn" id="refBtn" onclick="toggleRef()" title="参考顾问：给这段找参考 / 卡住了">参考</button>
         <div class="more-wrap">
           <button class="btn" onclick="toggleMore()" title="更多">⋯</button>
           <div id="moreMenu">
@@ -1028,7 +1029,7 @@
 
   <div id="marksPanel"></div>
 
-  <div id="advisorPanel">
+  <div id="advisorPanel" class="ad-panel">
     <div class="ad-head">
       <span class="ad-title">科幻顾问 · THE ROOM</span>
       <button class="ad-x" onclick="closeAdvisor()" title="关闭">✕</button>
@@ -1041,6 +1042,22 @@
       </div>
       <div class="ad-hint" id="advisorHint">依据 00_worldbuilding.md 作答。查冲突需先在正文里选中一段。</div>
       <div class="ad-out" id="advisorOut"></div>
+    </div>
+  </div>
+
+  <div id="refPanel" class="ad-panel">
+    <div class="ad-head">
+      <span class="ad-title">参考顾问</span>
+      <button class="ad-x" onclick="closeRef()" title="关闭">✕</button>
+    </div>
+    <div class="ad-body">
+      <textarea id="refQ" placeholder="卡在哪？「这场戏推不下去 / 落不到纸上 / 写出来觉得俗」——找参考可以留空"></textarea>
+      <div class="ad-row">
+        <button class="ad-go" id="refFind" onclick="runRef('find')">找参考</button>
+        <button class="ad-go" id="refStuck" onclick="runRef('stuck')">卡住了</button>
+      </div>
+      <div class="ad-hint" id="refHint">选中一段就只读那段，没选中读整篇。</div>
+      <div class="ad-out" id="refOut"></div>
     </div>
   </div>
 
@@ -2805,6 +2822,7 @@ function toggleAdvisor() {
   const p = $("advisorPanel");
   const opening = !p.classList.contains("open");
   $("marksPanel").classList.remove("open");
+  $("refPanel").classList.remove("open");   // 两个顾问面板同一个位置，不能并存
   p.classList.toggle("open", opening);
   if (opening) {
     const b = advisorBookLabel();
@@ -2878,6 +2896,82 @@ async function runAdvisor(mode) {
     advisorBusy = false;
     $("advisorAsk").disabled = false;
     $("advisorCheck").disabled = false;
+  }
+}
+
+/* ===== 参考顾问 =====
+   与科幻顾问的区别：不读 canon，正文直接上传，所以任何书任何文档都能用。
+   选区沿用 advisorLastSel（同一个 selectionchange 监听）。 */
+let refBusy = false;
+
+function toggleRef() {
+  const p = $("refPanel");
+  const opening = !p.classList.contains("open");
+  $("marksPanel").classList.remove("open");
+  $("advisorPanel").classList.remove("open");
+  p.classList.toggle("open", opening);
+  if (opening) {
+    $("refHint").textContent = current
+      ? "选中一段就只读那段，没选中读整篇。"
+      : "先打开一篇文档。";
+    $("refQ").focus();
+  }
+}
+
+function closeRef() {
+  $("refPanel").classList.remove("open");
+}
+
+async function runRef(mode) {
+  if (refBusy) return;
+
+  const out = $("refOut");
+  const question = $("refQ").value.trim();
+  const live = document.getSelection().toString().trim();
+  const picked = live || advisorLastSel;
+
+  if (!current) {
+    out.innerHTML = '<span class="ad-err">先打开一篇文档。</span>';
+    return;
+  }
+  if (mode === "stuck" && !question) {
+    out.innerHTML = '<span class="ad-err">先说说你卡在哪。</span>';
+    return;
+  }
+
+  // 选中优先；没选中就整篇（剥掉批注，那不是稿子的一部分）
+  const text = picked || stripNotes(getEditorContent()).trim();
+  if (mode === "find" && !text) {
+    out.innerHTML = '<span class="ad-err">这篇还是空的，先写点东西。</span>';
+    return;
+  }
+
+  refBusy = true;
+  $("refFind").disabled = true;
+  $("refStuck").disabled = true;
+  out.innerHTML = '<span class="ad-wait">' +
+    (picked ? "正在读选中的段落…" : "正在读整篇…") + "（十几秒）</span>";
+
+  try {
+    const data = await api("/reference-advisor", {
+      mode,
+      question,
+      text,
+      name: current.name,
+    });
+    if (!data.ok) {
+      out.innerHTML = '<span class="ad-err">' + (data.error || "调用失败") + "</span>";
+    } else {
+      out.innerHTML = advisorRender(data.answer);
+      $("refHint").textContent =
+        `依据《${data.book}》· ${picked ? "选中段落" : "整篇"} ${data.chars} 字`;
+    }
+  } catch (e) {
+    out.innerHTML = '<span class="ad-err">网络错误：' + e.message + "</span>";
+  } finally {
+    refBusy = false;
+    $("refFind").disabled = false;
+    $("refStuck").disabled = false;
   }
 }
 </script>

@@ -822,26 +822,34 @@ async def moonshot_chat(system: str, user: str, max_tokens: int = 2000) -> str:
     """调用 Kimi。失败时抛 RuntimeError，由端点统一转成 {ok:false}。"""
     if not MOONSHOT_API_KEY:
         raise RuntimeError("未配置 MOONSHOT_API_KEY")
-    try:
-        async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(
-                MOONSHOT_URL,
-                headers={
-                    "Authorization": f"Bearer {MOONSHOT_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": MOONSHOT_MODEL,
-                    "temperature": 0.3,
-                    "max_tokens": max_tokens,
-                    "messages": [
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user},
-                    ],
-                },
-            )
-    except httpx.HTTPError as e:
-        raise RuntimeError(f"网络错误: {e}")
+    # 中转站会瞬时限流（实测三次里中一次），隔几秒重发通常就过了。
+    # 只对 429 重试，其它状态码交给下面的统一错误处理。
+    for attempt in range(2):
+        try:
+            async with httpx.AsyncClient(timeout=120) as client:
+                resp = await client.post(
+                    MOONSHOT_URL,
+                    headers={
+                        "Authorization": f"Bearer {MOONSHOT_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": MOONSHOT_MODEL,
+                        "temperature": 0.3,
+                        "max_tokens": max_tokens,
+                        "messages": [
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": user},
+                        ],
+                    },
+                )
+        except httpx.HTTPError as e:
+            raise RuntimeError(f"网络错误: {e}")
+
+        if resp.status_code != 429 or attempt:
+            break
+        print("[kimi] 429，3 秒后重试一次")
+        await asyncio.sleep(3)
 
     if resp.status_code != 200:
         raise RuntimeError(f"Kimi 返回 {resp.status_code}: {resp.text[:200]}")
@@ -983,3 +991,88 @@ async def scifi_advisor(req: ScifiAdvisorRequest):
 
     return {"ok": True, "mode": mode, "answer": answer,
             "book": book, "canon": canon_name, "persona": persona_src}
+
+
+# ==================== 参考顾问（Kimi / Moonshot） ====================
+# 与科幻顾问的区别：不读 canon，正文由前端传上来，所以任何书、任何文档都能用。
+
+REF_TEXT_LIMIT = 12000   # 超出部分截掉：找参考不需要读完整章，且要控住延迟与成本
+
+
+class RefAdvisorRequest(BaseModel):
+    token: str
+    mode: str = "find"       # find=给稿子找参考 / stuck=卡住了求解法
+    question: str = ""       # stuck 模式必填：卡在哪
+    text: str = ""           # 选中的段落，或整篇正文
+    name: str = ""           # 当前文档名，仅用于告诉顾问在写哪本书
+
+
+REF_FIND_TEMPLATE = """作者正在写{where}。下面是她要你看的文字：
+
+<稿件>
+{text}
+</稿件>
+
+按你的「找参考」流程回答：先一句话说这段在处理什么难题，再给 2-4 部处理过**同类难题**的作品。
+
+记住：难题匹配 > 题材匹配。每部必须说清它**具体**怎么破的——落到一场戏、一个手法。
+把握不准的标【凭印象】，不确定的直接别写。最后一句说哪部最值得先看。
+"""
+
+REF_STUCK_TEMPLATE = """作者正在写{where}，卡住了。
+
+她卡的地方：
+{question}
+{text_block}
+按你的「卡住了」流程回答：先判断她卡的是哪一类（不知道接下来发生什么 / 落不到纸上 /
+觉得假和俗 / 不确定这段该不该存在），把判断说出来，再给对应的参考。
+
+如果你认为她其实不需要参考——比如这段的问题是它根本不该存在——直接说，不要硬塞作品。
+"""
+
+
+@app.post("/reference-advisor")
+async def reference_advisor(req: RefAdvisorRequest):
+    uid = await writing_uid_from_token(req.token)
+    if not uid:
+        return {"ok": False, "error": "无效令牌"}
+
+    mode = (req.mode or "find").strip()
+    if mode not in ("find", "stuck"):
+        return {"ok": False, "error": "mode 只能是 find 或 stuck"}
+
+    text = req.text.strip()[:REF_TEXT_LIMIT]
+    question = req.question.strip()
+    name = (req.name or "").strip()
+    book = advisor_book_prefix(name).rstrip("/") or "根书架"
+    where = f"《{book}》里的 {name}" if name else "一篇还没归档的稿子"
+
+    if mode == "find":
+        if not text:
+            return {"ok": False, "error": "先在正文里选中一段，或打开一篇有内容的文档"}
+        user_msg = REF_FIND_TEMPLATE.format(where=where, text=text)
+    else:
+        if not question:
+            return {"ok": False, "error": "先说说你卡在哪"}
+        text_block = f"\n相关的稿件：\n<稿件>\n{text}\n</稿件>\n" if text else ""
+        user_msg = REF_STUCK_TEMPLATE.format(
+            where=where, question=question, text_block=text_block,
+        )
+
+    try:
+        persona = advisor_prompt_file("reference_advisor_prompt.md")
+    except OSError as e:
+        print(f"[ref] 读取参考顾问 prompt 失败: {e}")
+        return {"ok": False, "error": "服务器内部错误"}
+
+    try:
+        answer = await moonshot_chat(persona, user_msg, 2000)
+    except RuntimeError as e:
+        print(f"[ref] Kimi 调用失败: {e}")
+        return {"ok": False, "error": str(e)}
+
+    if not answer:
+        return {"ok": False, "error": "Kimi 返回了空内容"}
+
+    return {"ok": True, "mode": mode, "answer": answer,
+            "book": book, "chars": len(text)}
