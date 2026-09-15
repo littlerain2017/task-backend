@@ -979,7 +979,7 @@
         <button class="btn" onclick="addNote()" title="给当前段落写一条批注（⌘/）">批注</button>
         <button class="btn" onclick="toggleMark()" title="标记/取消标记当前段落（⌘M），⌘⇧M 跳转书签">标记</button>
         <button class="btn" id="advisorBtn" onclick="toggleAdvisor()" title="科幻顾问：问设定 / 查冲突">顾问</button>
-        <button class="btn" id="refBtn" onclick="toggleRef()" title="参考顾问：给这段找参考 / 卡住了">参考</button>
+        <button class="btn" id="refBtn" onclick="toggleRef()" title="参考顾问：给这段找参考 / 卡住了。选中一段按 ⌥R 可直接问">参考</button>
         <div class="more-wrap">
           <button class="btn" onclick="toggleMore()" title="更多">⋯</button>
           <div id="moreMenu">
@@ -1056,7 +1056,7 @@
         <button class="ad-go" id="refFind" onclick="runRef('find')">找参考</button>
         <button class="ad-go" id="refStuck" onclick="runRef('stuck')">卡住了</button>
       </div>
-      <div class="ad-hint" id="refHint">选中一段就只读那段，没选中读整篇。</div>
+      <div class="ad-hint" id="refHint">选中一段就只读那段，没选中读整篇。选中后按 ⌥R 可跳过这一步直接问。</div>
       <div class="ad-out" id="refOut"></div>
     </div>
   </div>
@@ -1238,6 +1238,16 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     gotoSibling(e.code === "Comma" ? -1 : 1);
   }
+});
+
+/* ⌥R：选中一段，一键问参考顾问。
+   单独挂一个监听，不并进上面那个——它第一行就把 altKey 排除了，
+   去改那个 guard 会波及所有 ⌘ 组合。
+   用 e.code：⌥R 在 macOS 上的 e.key 是 "®"，按 key 判断会漏。 */
+document.addEventListener("keydown", (e) => {
+  if (!e.altKey || e.metaKey || e.ctrlKey || e.code !== "KeyR") return;
+  e.preventDefault();
+  refOnSelection();
 });
 
 /* ===== 段落书签 ===== */
@@ -2924,7 +2934,7 @@ function toggleRef() {
   p.classList.toggle("open", opening);
   if (opening) {
     $("refHint").textContent = current
-      ? "选中一段就只读那段，没选中读整篇。"
+      ? "选中一段就只读那段，没选中读整篇。选中后按 ⌥R 可直接问。"
       : "先打开一篇文档。";
     $("refQ").focus();
   }
@@ -2932,6 +2942,18 @@ function toggleRef() {
 
 function closeRef() {
   $("refPanel").classList.remove("open");
+}
+
+/* ⌥R 的落点：钉住选区 → 开面板 → 直接跑，不用再点一次按钮。
+   先把选区存进 advisorLastSel 再开面板——面板一开正文就失焦，
+   到 runRef 里 document.getSelection() 可能已经空了。 */
+function refOnSelection() {
+  const live = document.getSelection().toString().trim();
+  if (live) advisorLastSel = live;
+  $("marksPanel").classList.remove("open");
+  $("advisorPanel").classList.remove("open");
+  $("refPanel").classList.add("open");
+  runRef("find");
 }
 
 async function runRef(mode) {
