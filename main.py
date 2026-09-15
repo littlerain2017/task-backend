@@ -999,6 +999,7 @@ async def scifi_advisor(req: ScifiAdvisorRequest):
 
 REF_TEXT_LIMIT = 12000   # 超出部分截掉：找参考不需要读完整章，且要控住延迟与成本
 REF_CANON_LIMIT = 6000   # 背景只用来定位主题，不需要全文
+REF_NOTES_LIMIT = 2000   # 批注通常很短，多了说明是在当草稿本用
 
 
 class RefAdvisorRequest(BaseModel):
@@ -1006,6 +1007,7 @@ class RefAdvisorRequest(BaseModel):
     mode: str = "find"       # find=给稿子找参考 / stuck=卡住了求解法
     question: str = ""       # stuck 模式必填：卡在哪
     text: str = ""           # 选中的段落，或整篇正文
+    notes: str = ""          # 整篇里未完成的作者批注，前端已剥掉 ✓ 过的
     name: str = ""           # 当前文档名，用于定位这本书的 00_ 设定
 
 
@@ -1016,8 +1018,17 @@ REF_CANON_BLOCK = """
 </背景>
 """
 
+REF_NOTES_BLOCK = """
+作者在这篇稿子里留给自己的批注（**不是正文**，是她自己的疑问和提醒——
+往往就是她真正卡住的地方，比稿面上看得出来的更准）：
+<批注>
+{notes}
+</批注>
+如果批注里的困惑和这段稿子的难题是同一件事，**优先回应批注里说的那个**。
+"""
+
 REF_FIND_TEMPLATE = """作者正在写{where}。
-{canon_block}
+{canon_block}{notes_block}
 下面是她要你看的文字：
 
 <稿件>
@@ -1034,7 +1045,7 @@ REF_FIND_TEMPLATE = """作者正在写{where}。
 """
 
 REF_STUCK_TEMPLATE = """作者正在写{where}，卡住了。
-{canon_block}
+{canon_block}{notes_block}
 她卡的地方：
 {question}
 {text_block}
@@ -1074,18 +1085,21 @@ async def reference_advisor(req: RefAdvisorRequest):
         print(f"[ref] 读取《{book}》设定失败，按无背景继续: {e}")
         canon_name = ""
 
+    notes = req.notes.strip()[:REF_NOTES_LIMIT]
+    notes_block = REF_NOTES_BLOCK.format(notes=notes) if notes else ""
+
     if mode == "find":
         if not text:
             return {"ok": False, "error": "先在正文里选中一段，或打开一篇有内容的文档"}
         user_msg = REF_FIND_TEMPLATE.format(
-            where=where, canon_block=canon_block, text=text,
+            where=where, canon_block=canon_block, notes_block=notes_block, text=text,
         )
     else:
         if not question:
             return {"ok": False, "error": "先说说你卡在哪"}
         text_block = f"\n相关的稿件：\n<稿件>\n{text}\n</稿件>\n" if text else ""
         user_msg = REF_STUCK_TEMPLATE.format(
-            where=where, canon_block=canon_block,
+            where=where, canon_block=canon_block, notes_block=notes_block,
             question=question, text_block=text_block,
         )
 
@@ -1104,5 +1118,6 @@ async def reference_advisor(req: RefAdvisorRequest):
     if not answer:
         return {"ok": False, "error": "Kimi 返回了空内容"}
 
-    return {"ok": True, "mode": mode, "answer": answer,
-            "book": book, "chars": len(text), "canon": canon_name}
+    return {"ok": True, "mode": mode, "answer": answer, "book": book,
+            "chars": len(text), "canon": canon_name,
+            "notes": len(notes.split("\n---\n")) if notes else 0}

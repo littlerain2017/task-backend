@@ -2904,6 +2904,18 @@ async function runAdvisor(mode) {
    选区沿用 advisorLastSel（同一个 selectionchange 监听）。 */
 let refBusy = false;
 
+/* 抽出未完成的作者批注——她写给自己的疑问，往往就是卡点本身。
+   打了 ✓ 的是已经处理掉的，不用再让顾问看。始终取整篇：
+   只选了一段时，相关批注很可能落在选区外。 */
+function collectNotes(text) {
+  const out = [];
+  for (const line of text.split("\n")) {
+    const m = line.match(NOTE_RE);
+    if (m && !m[2] && m[5]) out.push(noteDecode(m[5]));
+  }
+  return out.join("\n---\n");
+}
+
 function toggleRef() {
   const p = $("refPanel");
   const opening = !p.classList.contains("open");
@@ -2939,8 +2951,10 @@ async function runRef(mode) {
     return;
   }
 
-  // 选中优先；没选中就整篇（剥掉批注，那不是稿子的一部分）
-  const text = picked || stripNotes(getEditorContent()).trim();
+  // 选中优先；没选中就整篇。批注单独抽出来给顾问，不混在正文里。
+  const full = getEditorContent();
+  const text = picked || stripNotes(full).trim();
+  const notes = collectNotes(full);
   if (mode === "find" && !text) {
     out.innerHTML = '<span class="ad-err">这篇还是空的，先写点东西。</span>';
     return;
@@ -2957,6 +2971,7 @@ async function runRef(mode) {
       mode,
       question,
       text,
+      notes,
       name: current.name,
     });
     if (!data.ok) {
@@ -2965,7 +2980,8 @@ async function runRef(mode) {
       out.innerHTML = advisorRender(data.answer);
       $("refHint").textContent =
         `依据《${data.book}》· ${picked ? "选中段落" : "整篇"} ${data.chars} 字` +
-        (data.canon ? ` · 背景 ${data.canon}` : " · 这本书没有 00_ 设定，没带背景");
+        (data.canon ? ` · 背景 ${data.canon}` : " · 无 00_ 设定") +
+        (data.notes ? ` · 批注 ${data.notes} 条` : "");
     }
   } catch (e) {
     out.innerHTML = '<span class="ad-err">网络错误：' + e.message + "</span>";
