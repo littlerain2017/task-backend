@@ -754,8 +754,12 @@ async def writing_watcher_script():
 MOONSHOT_API_KEY = os.environ.get("MOONSHOT_API_KEY", "").strip()
 MOONSHOT_MODEL = os.environ.get("MOONSHOT_MODEL", "kimi-k3")
 # 用中转站/代理时改这个（OpenAI 兼容格式，填到 /v1 为止）
-MOONSHOT_BASE_URL = os.environ.get("MOONSHOT_BASE_URL", "https://api.moonshot.cn/v1").rstrip("/")
+MOONSHOT_BASE_URL = os.environ.get("MOONSHOT_BASE_URL", "https://api.moonshot.ai/v1").rstrip("/")
 MOONSHOT_URL = f"{MOONSHOT_BASE_URL}/chat/completions"
+# 官方 kimi-k3 是推理模型：不限制推理深度，它会把 max_tokens 全烧在思维链上，
+# 正文一个字都不剩（实测 6000 tokens 全进 reasoning）。设 low 即可，实测只花几十。
+# 留空则不发这个参数——给不认识它的代理站留退路。
+MOONSHOT_REASONING_EFFORT = os.environ.get("MOONSHOT_REASONING_EFFORT", "").strip()
 
 def is_countable(name: str) -> bool:
     """文件名以 _ 开头的是配置/AI 产物，存内容但不计写作字数。"""
@@ -822,7 +826,19 @@ async def moonshot_chat(system: str, user: str, max_tokens: int = 2000) -> str:
     """调用 Kimi。失败时抛 RuntimeError，由端点统一转成 {ok:false}。"""
     if not MOONSHOT_API_KEY:
         raise RuntimeError("未配置 MOONSHOT_API_KEY")
-    # 中转站会瞬时限流（实测三次里中一次），隔几秒重发通常就过了。
+    # 不发 temperature：官方 kimi-k3 只接受 1，发别的值直接 400。
+    body = {
+        "model": MOONSHOT_MODEL,
+        "max_tokens": max_tokens,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+    }
+    if MOONSHOT_REASONING_EFFORT:
+        body["reasoning_effort"] = MOONSHOT_REASONING_EFFORT
+
+    # 代理站会瞬时限流（实测三次里中一次），隔几秒重发通常就过了。
     # 只对 429 重试，其它状态码交给下面的统一错误处理。
     for attempt in range(2):
         try:
@@ -833,15 +849,7 @@ async def moonshot_chat(system: str, user: str, max_tokens: int = 2000) -> str:
                         "Authorization": f"Bearer {MOONSHOT_API_KEY}",
                         "Content-Type": "application/json",
                     },
-                    json={
-                        "model": MOONSHOT_MODEL,
-                        "temperature": 0.3,
-                        "max_tokens": max_tokens,
-                        "messages": [
-                            {"role": "system", "content": system},
-                            {"role": "user", "content": user},
-                        ],
-                    },
+                    json=body,
                 )
         except httpx.HTTPError as e:
             raise RuntimeError(f"网络错误: {e}")
@@ -861,7 +869,15 @@ async def moonshot_chat(system: str, user: str, max_tokens: int = 2000) -> str:
     choices = payload.get("choices") or []
     if not choices:
         raise RuntimeError(f"Kimi 响应异常: {str(payload)[:200]}")
-    return choices[0].get("message", {}).get("content", "").strip()
+
+    msg = choices[0].get("message") or {}
+    content = (msg.get("content") or "").strip()
+    # 推理模型不限深度时会把 token 全烧在思维链上，正文为空。单看
+    # 「返回了空内容」这个故障根本查不出来，所以把解法写进错误信息里。
+    if not content and (msg.get("reasoning_content") or "").strip():
+        raise RuntimeError("模型把 token 全用在思维链上了，正文为空——"
+                           "把环境变量 MOONSHOT_REASONING_EFFORT 设成 low 即可")
+    return content
 
 
 ASK_TEMPLATE = """下面是《{book}》的世界观权威设定（{canon_name}）：
@@ -1110,7 +1126,8 @@ async def reference_advisor(req: RefAdvisorRequest):
         return {"ok": False, "error": "服务器内部错误"}
 
     try:
-        answer = await moonshot_chat(persona, user_msg, 2000)
+        # 要列 2-4 部作品、每部三条，天然比科幻顾问的回答长，给宽一点免得截断
+        answer = await moonshot_chat(persona, user_msg, 3000)
     except RuntimeError as e:
         print(f"[ref] Kimi 调用失败: {e}")
         return {"ok": False, "error": str(e)}
