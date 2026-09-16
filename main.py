@@ -837,6 +837,10 @@ async def advisor_persona(uid: str, prefix: str):
     return base, "通用底座（本书无 _advisor.md，缺项目坐标）"
 
 
+class ModelNotAvailable(RuntimeError):
+    """当前端点没有请求的模型——中转站 token 有白名单，官方没有。端点据此降级。"""
+
+
 async def _moonshot_post(body: dict) -> dict:
     """单次请求：429 重试一次、超时与网络错误转成能看懂的 RuntimeError。"""
     for attempt in range(2):
@@ -863,6 +867,11 @@ async def _moonshot_post(body: dict) -> dict:
         print("[kimi] 429，3 秒后重试一次")
         await asyncio.sleep(3)
 
+    if resp.status_code == 403 and "no access to model" in resp.text:
+        # 中转站 token 有模型白名单，官方没有；撞上这条八成是 base_url 回到了中转站
+        raise ModelNotAvailable(f"当前 Kimi 端点没有 {body.get('model')} 的权限——"
+                           "查 Railway 的 MOONSHOT_BASE_URL 是不是又指回了中转站；"
+                           "打 /kimi-diag 能看到进程实际读到的配置")
     if resp.status_code != 200:
         raise RuntimeError(f"Kimi 返回 {resp.status_code}: {resp.text[:200]}")
     payload = resp.json()
@@ -1146,6 +1155,28 @@ REF_STUCK_TEMPLATE = """作者正在写{where}，卡住了。
 """
 
 
+class KimiDiagRequest(BaseModel):
+    token: str
+
+
+@app.post("/kimi-diag")
+async def kimi_diag(req: KimiDiagRequest):
+    """两个顾问共用的 Kimi 配置，进程实际读到的值。排"到底走的是哪个站"这类问题用。"""
+    uid = await writing_uid_from_token(req.token)
+    if not uid:
+        return {"ok": False, "error": "无效令牌"}
+    from urllib.parse import urlparse
+    return {
+        "ok": True,
+        "base_host": urlparse(MOONSHOT_BASE_URL).netloc,
+        "model": MOONSHOT_MODEL,
+        "ref_model": MOONSHOT_REF_MODEL,
+        "ref_search": MOONSHOT_REF_SEARCH,
+        "reasoning_effort": MOONSHOT_REASONING_EFFORT or "(未设)",
+        "key_sha8": hashlib.sha256(MOONSHOT_API_KEY.encode()).hexdigest()[:8] if MOONSHOT_API_KEY else "",
+    }
+
+
 @app.post("/reference-advisor")
 async def reference_advisor(req: RefAdvisorRequest):
     uid = await writing_uid_from_token(req.token)
@@ -1218,6 +1249,7 @@ async def reference_advisor(req: RefAdvisorRequest):
         print(f"[ref] 读取参考顾问 prompt 失败: {e}")
         return {"ok": False, "error": "服务器内部错误"}
 
+    degraded = ""
     try:
         # 要列 2-4 部作品、每部三条，天然比科幻顾问的回答长，给宽一点免得截断。
         # 只在「找参考」开搜索：「卡住了」以做法为主，搜索只会把它拉回书单。
@@ -1225,6 +1257,16 @@ async def reference_advisor(req: RefAdvisorRequest):
         answer, meta = await moonshot_chat(
             persona, user_msg, 3000,
             model=MOONSHOT_REF_MODEL, tools=REF_TOOLS if use_search else None)
+    except ModelNotAvailable as e:
+        # 八成是 base_url 回到了中转站。退回主模型、不联网，顾问照常能用；
+        # 提示里说明降级了，Railway 配置修好会自动恢复，不用重部署。
+        print(f"[ref] {e}")
+        degraded = f"端点没有 {MOONSHOT_REF_MODEL}，已退回 {MOONSHOT_MODEL} 且未联网"
+        try:
+            answer, meta = await moonshot_chat(persona, user_msg, 3000)
+        except RuntimeError as e2:
+            print(f"[ref] 降级后仍失败: {e2}")
+            return {"ok": False, "error": str(e2)}
     except RuntimeError as e:
         print(f"[ref] Kimi 调用失败: {e}")
         return {"ok": False, "error": str(e)}
@@ -1234,5 +1276,5 @@ async def reference_advisor(req: RefAdvisorRequest):
 
     return {"ok": True, "mode": mode, "answer": answer, "book": book,
             "chars": len(text), "canon": canon_name, "taste": taste_name,
-            "searched": meta["searched"],
+            "searched": meta["searched"], "degraded": degraded,
             "notes": len(notes.split("\n---\n")) if notes else 0}
