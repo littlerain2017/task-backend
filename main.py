@@ -845,8 +845,8 @@ async def _moonshot_post(body: dict) -> dict:
     """单次请求：429 重试一次、超时与网络错误转成能看懂的 RuntimeError。"""
     for attempt in range(2):
         try:
-            # 240 而不是 120：读整篇长稿 + 六千字设定背景时，推理加生成能跑到两三分钟
-            async with httpx.AsyncClient(timeout=240) as client:
+            # 280 而不是 120：长稿 + 设定背景 + 联网多轮，最慢的一条路要跑四分钟
+            async with httpx.AsyncClient(timeout=280) as client:
                 resp = await client.post(
                     MOONSHOT_URL,
                     headers={
@@ -882,7 +882,7 @@ async def _moonshot_post(body: dict) -> dict:
 
 
 async def moonshot_chat(system: str, user: str, max_tokens: int = 2000, *,
-                        model: str = "", tools=None, max_tool_rounds: int = 3):
+                        model: str = "", tools=None, max_tool_rounds: int = 2):
     """调用 Kimi，返回 (正文, 元信息)。失败抛 RuntimeError，由端点统一转成 {ok:false}。
 
     传 tools 时跑 Moonshot 内置工具循环（目前只用 $web_search）。它的约定是：
@@ -1072,6 +1072,9 @@ async def scifi_advisor(req: ScifiAdvisorRequest):
 
 REF_TEXT_LIMIT = 12000   # 超出部分截掉：找参考不需要读完整章，且要控住延迟与成本
 REF_CANON_LIMIT = 6000   # 背景只用来定位主题，不需要全文
+# 联网是多轮的，每轮都要把全部输入重读一遍，所以开搜索时把背景压薄。
+# 顺带治一个老毛病：canon 越详细，选片越容易被题材带跑。
+REF_CANON_LIMIT_SEARCH = 2500
 REF_NOTES_LIMIT = 2000   # 批注通常很短，多了说明是在当草稿本用
 REF_TASTE_LIMIT = 5000   # 作者自己的参考库：品味坐标 + 排除清单
 # 参考顾问单独选模型：国际站 kimi-k3 多轮工具必挂（tokenization failed），k2.6 好用且快三倍
@@ -1196,11 +1199,15 @@ async def reference_advisor(req: RefAdvisorRequest):
     book = advisor_book_prefix(name).rstrip("/") or "根书架"
     where = f"《{book}》里的 {name}" if name else "一篇还没归档的稿子"
 
+    # 只在「找参考」开搜索：「卡住了」以做法为主，搜索只会把它拉回书单
+    use_search = MOONSHOT_REF_SEARCH and mode == "find"
+
     # 这本书的 00_ 设定当背景。读不到就空着——参考顾问不像科幻顾问那样依赖它。
     canon_block, canon_name = "", ""
     try:
         canon_name = await advisor_find_doc(uid, advisor_book_prefix(name), CANON_PREFIX)
-        canon = (await advisor_doc_text(uid, canon_name)).strip()[:REF_CANON_LIMIT]
+        limit = REF_CANON_LIMIT_SEARCH if use_search else REF_CANON_LIMIT
+        canon = (await advisor_doc_text(uid, canon_name)).strip()[:limit]
         if canon:
             canon_block = REF_CANON_BLOCK.format(canon_name=canon_name, canon=canon)
         else:
@@ -1258,8 +1265,6 @@ async def reference_advisor(req: RefAdvisorRequest):
         # k2.6 的思维链就跟着涨，3000 会被推理吃光导致正文为空（实测 3000 时
         # reasoning 用到 1571-2569，给到 8000 反而只用 204）。max_tokens 是上限
         # 不是消耗，调大不额外花钱。
-        # 只在「找参考」开搜索：「卡住了」以做法为主，搜索只会把它拉回书单。
-        use_search = MOONSHOT_REF_SEARCH and mode == "find"
         answer, meta = await moonshot_chat(
             persona, user_msg, 8000,
             model=MOONSHOT_REF_MODEL, tools=REF_TOOLS if use_search else None)
