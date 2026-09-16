@@ -808,7 +808,7 @@ async def advisor_find_doc(uid: str, prefix: str, starts: str) -> str:
 # 写作系统带我飞是 00_世界观设定.md，营救麦克黄是 _故事大纲.md。只认 00_
 # 会漏掉最后那种。科幻顾问仍走 advisor_find_doc（它硬性要求 00_，那是明确
 # 设计），参考顾问的背景是可选的，放宽了也不会误伤。
-CANON_HINTS = ("大纲", "outline", "世界观", "设定集", "圣经", "bible", "bible")
+CANON_HINTS = ("大纲", "outline", "世界观", "设定集", "圣经", "bible")
 
 
 def _in_book(name: str, prefix: str) -> bool:
