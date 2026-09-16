@@ -59,6 +59,10 @@ grep -n "\.remove()\|editor\.innerHTML\|querySelectorAll\|node\.textContent =" w
 - push 到 main 即部署，约 25 秒
 - `/write` `/read` 已设 `no-cache`。**在此之前没有缓存头，导致多次"部署了却看不到效果"被误判成代码 bug**
 - 验证部署用 `curl -s .../write | grep <新符号>`，但**这只能证明代码上线，证明不了页面表现对**
+- **改环境变量后必须点 Railway 顶部的 Deploy。** 改完只是 staged changes，不会自动生效，
+  之后的 git push 部署用的也是旧变量。2026-09-16 切 Kimi 官方站就是这样"改了但从没生效"，
+  五次验证全被误判。查进程实际读到的配置用 `POST /kimi-diag`（返回 base_host 与 key 的 sha8），
+  不要用行为探针推断
 
 ## 命名约定（与 watcher 联动）
 
