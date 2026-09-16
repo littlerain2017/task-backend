@@ -882,7 +882,8 @@ async def _moonshot_post(body: dict) -> dict:
 
 
 async def moonshot_chat(system: str, user: str, max_tokens: int = 2000, *,
-                        model: str = "", tools=None, max_tool_rounds: int = 2):
+                        model: str = "", tools=None, max_tool_rounds: int = 2,
+                        thinking=None):
     """调用 Kimi，返回 (正文, 元信息)。失败抛 RuntimeError，由端点统一转成 {ok:false}。
 
     传 tools 时跑 Moonshot 内置工具循环（目前只用 $web_search）。它的约定是：
@@ -899,7 +900,12 @@ async def moonshot_chat(system: str, user: str, max_tokens: int = 2000, *,
         # 不发 temperature：官方 kimi-k3 只接受 1，发别的值直接 400。
         body = {"model": model or MOONSHOT_MODEL, "max_tokens": max_tokens,
                 "messages": messages}
-        if MOONSHOT_REASONING_EFFORT:
+        # 两个模型两套开关：k3 认 reasoning_effort，k2.6 只认 thinking。
+        # 给 k2.6 传 reasoning_effort 不报错也不生效，长输入下它照样把
+        # max_tokens 全烧在思维链上（实测 7999/8000，正文 0 字）。
+        if thinking is not None:
+            body["thinking"] = thinking
+        elif MOONSHOT_REASONING_EFFORT:
             body["reasoning_effort"] = MOONSHOT_REASONING_EFFORT
         if tools and round_ < max_tool_rounds:
             body["tools"] = tools
@@ -1266,8 +1272,9 @@ async def reference_advisor(req: RefAdvisorRequest):
         # reasoning 用到 1571-2569，给到 8000 反而只用 204）。max_tokens 是上限
         # 不是消耗，调大不额外花钱。
         answer, meta = await moonshot_chat(
-            persona, user_msg, 8000,
-            model=MOONSHOT_REF_MODEL, tools=REF_TOOLS if use_search else None)
+            persona, user_msg, 8000, model=MOONSHOT_REF_MODEL,
+            tools=REF_TOOLS if use_search else None,
+            thinking={"type": "disabled"})
     except ModelNotAvailable as e:
         # 八成是 base_url 回到了中转站。退回主模型、不联网，顾问照常能用；
         # 提示里说明降级了，Railway 配置修好会自动恢复，不用重部署。
