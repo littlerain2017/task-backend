@@ -2951,6 +2951,20 @@ function closeRef() {
   $("refPanel").classList.remove("open");
 }
 
+/* 最近推荐过的作品名。模型没有跨请求记忆，"别重复"只能靠前端记下来再喂回去。
+   存本机 localStorage：个人工具，不需要跨设备；20 部够覆盖一两周的写作。 */
+const REF_RECENT_KEY = "ref_recent_titles";
+function refRecent() {
+  try { return JSON.parse(localStorage.getItem(REF_RECENT_KEY) || "[]"); }
+  catch { return []; }
+}
+function refRemember(answer) {
+  const titles = [...answer.matchAll(/《([^》]+)》/g)].map((m) => m[1].trim()).filter(Boolean);
+  if (!titles.length) return;
+  const merged = [...new Set([...titles, ...refRecent()])].slice(0, 20);
+  try { localStorage.setItem(REF_RECENT_KEY, JSON.stringify(merged)); } catch {}
+}
+
 /* 标了「问」的段落，按阅读顺序。highlights 里存的 text 就是标记时的原文，
    段落改动后由 renderHighlights 的锚点自愈负责更新，这里直接用。 */
 function askMarks() {
@@ -3012,11 +3026,13 @@ async function runRef(mode) {
       question,
       text,
       notes,
+      recent: refRecent(),
       name: current.name,
     });
     if (!data.ok) {
       out.innerHTML = '<span class="ad-err">' + (data.error || "调用失败") + "</span>";
     } else {
+      refRemember(data.answer);
       out.innerHTML = advisorRender(data.answer);
       $("refHint").textContent =
         `依据《${data.book}》· ${source} ${data.chars} 字` +

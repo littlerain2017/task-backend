@@ -1045,6 +1045,7 @@ class RefAdvisorRequest(BaseModel):
     question: str = ""       # stuck 模式必填：卡在哪
     text: str = ""           # 选中的段落，或整篇正文
     notes: str = ""          # 整篇里未完成的作者批注，前端已剥掉 ✓ 过的
+    recent: list[str] = []   # 前端记的最近推荐过的作品名——模型没有记忆，重复只能靠这个挡
     name: str = ""           # 当前文档名，用于定位这本书的 00_ 设定
 
 
@@ -1063,6 +1064,11 @@ REF_TASTE_BLOCK = """
 </参考库>
 """
 
+REF_RECENT_BLOCK = """
+最近几次已经推荐过这些，**不要再给**（除非它确实是这次唯一的最优解，那就一句话点它，不用三件事格式）：
+{recent}
+"""
+
 REF_NOTES_BLOCK = """
 作者在这个本子里留给自己的批注（**不是正文**，是她自己的疑问和提醒——
 往往就是她真正卡住的地方，比稿面上看得出来的更准）：
@@ -1073,7 +1079,7 @@ REF_NOTES_BLOCK = """
 """
 
 REF_FIND_TEMPLATE = """作者正在写{where}。
-{canon_block}{taste_block}{notes_block}
+{canon_block}{taste_block}{recent_block}{notes_block}
 下面是她要你看的文字：
 
 <场次>
@@ -1092,7 +1098,7 @@ REF_FIND_TEMPLATE = """作者正在写{where}。
 """
 
 REF_STUCK_TEMPLATE = """作者正在写{where}，卡住了。
-{canon_block}{taste_block}{notes_block}
+{canon_block}{taste_block}{recent_block}{notes_block}
 她卡的地方：
 {question}
 {text_block}
@@ -1156,12 +1162,16 @@ async def reference_advisor(req: RefAdvisorRequest):
     notes = req.notes.strip()[:REF_NOTES_LIMIT]
     notes_block = REF_NOTES_BLOCK.format(notes=notes) if notes else ""
 
+    # 前端传来的是用户浏览器里的东西，当外部输入处理：只收字符串、截长、封顶
+    recent = [str(x).strip()[:60] for x in (req.recent or []) if str(x).strip()][:20]
+    recent_block = REF_RECENT_BLOCK.format(recent="、".join(f"《{t}》" for t in recent)) if recent else ""
+
     if mode == "find":
         if not text:
             return {"ok": False, "error": "先在正文里选中一段，或打开一篇有内容的文档"}
         user_msg = REF_FIND_TEMPLATE.format(
             where=where, canon_block=canon_block, taste_block=taste_block,
-            notes_block=notes_block, text=text,
+            recent_block=recent_block, notes_block=notes_block, text=text,
         )
     else:
         if not question:
@@ -1169,7 +1179,8 @@ async def reference_advisor(req: RefAdvisorRequest):
         text_block = f"\n相关的场次：\n<场次>\n{text}\n</场次>\n" if text else ""
         user_msg = REF_STUCK_TEMPLATE.format(
             where=where, canon_block=canon_block, taste_block=taste_block,
-            notes_block=notes_block, question=question, text_block=text_block,
+            recent_block=recent_block, notes_block=notes_block,
+            question=question, text_block=text_block,
         )
 
     try:
