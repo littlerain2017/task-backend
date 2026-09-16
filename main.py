@@ -1237,14 +1237,16 @@ async def ref_three_stage(persona: str, blocks: dict, text: str):
     思维链开着也不会失控；输入大的那步（把人格、设定、参考库压进来组织成答案）
     此时思考已经做完，关掉思维链正好，参考库在这一步只当照着比对的排除清单。
     """
+    # 2000 而不是 600：这一步思维链是开着的，原型实测光推理就用掉 984，
+    # 给 600 会被它吃光、正文为空（线上踩过）。输出本身只有一两百字。
     brief, _ = await moonshot_chat(
-        REF_BRIEF_SYS, REF_BRIEF_USER.format(text=text), 600,
+        REF_BRIEF_SYS, REF_BRIEF_USER.format(text=text), 2000,
         model=MOONSHOT_REF_MODEL, thinking={"type": "enabled"})
 
     msgs = [{"role": "system", "content": REF_BRIEF_SYS},
             {"role": "user", "content": REF_SEARCH_USER.format(brief=brief or text[:500])}]
     _, meta = await moonshot_run(
-        msgs, 1500, model=MOONSHOT_REF_MODEL, tools=REF_TOOLS,
+        msgs, 2000, model=MOONSHOT_REF_MODEL, tools=REF_TOOLS,
         thinking={"type": "enabled"})
 
     msgs.append({"role": "user",
