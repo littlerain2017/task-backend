@@ -927,8 +927,11 @@ async def moonshot_chat(system: str, user: str, max_tokens: int = 2000, *,
         # 推理模型不限深度时会把 token 全烧在思维链上，正文为空。单看
         # 「返回了空内容」这个故障根本查不出来，所以把解法写进错误信息里。
         if not content and (msg.get("reasoning_content") or "").strip():
-            raise RuntimeError("模型把 token 全用在思维链上了，正文为空——"
-                               "把环境变量 MOONSHOT_REASONING_EFFORT 设成 low 即可")
+            used = ((payload.get("usage") or {}).get("completion_tokens_details") or {}).get("reasoning_tokens")
+            raise RuntimeError(
+                f"模型把 token 全用在思维链上了（推理 {used or '?'} / 上限 {max_tokens}），正文为空。"
+                "两种成因：MOONSHOT_REASONING_EFFORT 没设成 low；或者这次输入太长、"
+                "max_tokens 不够——选中一段再问，或少标几段")
         return content, {"searched": searched}
 
     raise RuntimeError("工具循环没有收口")   # 到不了：最后一轮没给工具
@@ -1251,11 +1254,14 @@ async def reference_advisor(req: RefAdvisorRequest):
 
     degraded = ""
     try:
-        # 要列 2-4 部作品、每部三条，天然比科幻顾问的回答长，给宽一点免得截断。
+        # 8000 而不是 3000：人格 + canon + 参考库 + 正文 一起塞进去，输入一大
+        # k2.6 的思维链就跟着涨，3000 会被推理吃光导致正文为空（实测 3000 时
+        # reasoning 用到 1571-2569，给到 8000 反而只用 204）。max_tokens 是上限
+        # 不是消耗，调大不额外花钱。
         # 只在「找参考」开搜索：「卡住了」以做法为主，搜索只会把它拉回书单。
         use_search = MOONSHOT_REF_SEARCH and mode == "find"
         answer, meta = await moonshot_chat(
-            persona, user_msg, 3000,
+            persona, user_msg, 8000,
             model=MOONSHOT_REF_MODEL, tools=REF_TOOLS if use_search else None)
     except ModelNotAvailable as e:
         # 八成是 base_url 回到了中转站。退回主模型、不联网，顾问照常能用；
@@ -1263,7 +1269,7 @@ async def reference_advisor(req: RefAdvisorRequest):
         print(f"[ref] {e}")
         degraded = f"端点没有 {MOONSHOT_REF_MODEL}，已退回 {MOONSHOT_MODEL} 且未联网"
         try:
-            answer, meta = await moonshot_chat(persona, user_msg, 3000)
+            answer, meta = await moonshot_chat(persona, user_msg, 8000)
         except RuntimeError as e2:
             print(f"[ref] 降级后仍失败: {e2}")
             return {"ok": False, "error": str(e2)}
