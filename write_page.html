@@ -444,6 +444,8 @@
     box-shadow: 0 6px 24px rgba(0,0,0,0.5);
     transform: translate(-50%, -100%);
   }
+  /* 上方放不下（选区贴近顶栏）时翻到选区下方 */
+  #hlPalette.below { transform: translate(-50%, 0); }
   #hlPalette.open { display: flex; }
   #hlPalette .sw {
     width: 20px; height: 20px; border-radius: 50%; cursor: pointer;
@@ -2503,9 +2505,21 @@ function showPalette() {
     pal.classList.remove("open"); return;
   }
   const rect = document.getSelection().getRangeAt(0).getBoundingClientRect();
-  pal.style.left = (rect.left + rect.width / 2) + "px";
-  pal.style.top = (rect.top - 8) + "px";
-  pal.classList.add("open");
+  // 选区被滚出视口就收起，别让色板孤零零悬在屏幕上
+  if (rect.bottom < 0 || rect.top > window.innerHeight) {
+    pal.classList.remove("open"); return;
+  }
+
+  pal.classList.add("open");                 // 先显示，否则量不到尺寸
+  const headerH = (document.querySelector("header") || {}).offsetHeight || 0;
+  const above = rect.top - 8 - pal.offsetHeight >= headerH;
+  pal.classList.toggle("below", !above);     // 上方被顶栏占住就翻到下方
+  pal.style.top = (above ? rect.top - 8 : rect.bottom + 8) + "px";
+
+  const half = pal.offsetWidth / 2, pad = 10;
+  pal.style.left = Math.min(
+    Math.max(rect.left + rect.width / 2, half + pad),
+    window.innerWidth - half - pad) + "px";  // 左右都不出视口
 }
 
 function persistHighlights() {
@@ -2578,6 +2592,14 @@ $("hlPalette").addEventListener("mousedown", (e) => {
 document.addEventListener("selectionchange", () => {
   if (document.activeElement === editor) setTimeout(showPalette, 0);
   else $("hlPalette").classList.remove("open");
+});
+// 色板是 position:fixed，用的是视口坐标——滚动时不重算就会和选区脱节。
+// 捕获阶段监听，任何可滚动祖先滚动都能收到。
+window.addEventListener("scroll", () => {
+  if ($("hlPalette").classList.contains("open")) showPalette();
+}, { passive: true, capture: true });
+window.addEventListener("resize", () => {
+  if ($("hlPalette").classList.contains("open")) showPalette();
 });
 
 async function shareBook() {
