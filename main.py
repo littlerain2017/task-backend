@@ -804,14 +804,39 @@ async def advisor_find_doc(uid: str, prefix: str, starts: str) -> str:
     return ""
 
 
+# 每本书管自己的大纲叫什么全凭习惯：THE ROOM 是 00_worldbuilding.md，
+# 写作系统带我飞是 00_世界观设定.md，营救麦克黄是 _故事大纲.md。只认 00_
+# 会漏掉最后那种。科幻顾问仍走 advisor_find_doc（它硬性要求 00_，那是明确
+# 设计），参考顾问的背景是可选的，放宽了也不会误伤。
+CANON_HINTS = ("大纲", "outline", "世界观", "设定集", "圣经", "bible", "bible")
+
+
+def _in_book(name: str, prefix: str) -> bool:
+    if not name.startswith(prefix):
+        return False
+    # 根书架：startswith("") 什么都匹配，得把别的书挡掉
+    return not (not prefix and "/" in name)
+
+
+async def ref_find_canon(uid: str, prefix: str) -> str:
+    """参考顾问的背景：先找书根目录的 00_（与科幻顾问同口径），
+    再按「大纲/世界观」这类字眼找，允许在子目录里。"""
+    names = sorted(d.get("name", "") for d in await writing_doc_metas(uid))
+    for n in names:
+        rel = n[len(prefix):]
+        if _in_book(n, prefix) and "/" not in rel and rel.startswith(CANON_PREFIX):
+            return n
+    for n in names:
+        if _in_book(n, prefix) and any(h in n.rsplit("/", 1)[-1].lower() for h in CANON_HINTS):
+            return n
+    return ""
+
+
 async def ref_find_taste(uid: str, prefix: str) -> str:
     """作者自己整理的参考库。跟 advisor_find_doc 不同，这里要进子目录——
     她的文件组织是 THE ROOM/设定/references.md，不在书的根目录。"""
-    docs = await writing_doc_metas(uid)
-    for n in sorted(d.get("name", "") for d in docs):
-        if not n.startswith(prefix):
-            continue
-        if not prefix and "/" in n:   # 根书架：startswith("") 什么都匹配，得把别的书挡掉
+    for n in sorted(d.get("name", "") for d in await writing_doc_metas(uid)):
+        if not _in_book(n, prefix):
             continue
         base = n.rsplit("/", 1)[-1].lower()
         if "reference" in base or "参考" in base:
@@ -1305,7 +1330,7 @@ async def reference_advisor(req: RefAdvisorRequest):
     # 这本书的 00_ 设定当背景。读不到就空着——参考顾问不像科幻顾问那样依赖它。
     canon_block, canon_name = "", ""
     try:
-        canon_name = await advisor_find_doc(uid, advisor_book_prefix(name), CANON_PREFIX)
+        canon_name = await ref_find_canon(uid, advisor_book_prefix(name))
         limit = REF_CANON_LIMIT_SEARCH if use_search else REF_CANON_LIMIT
         canon = (await advisor_doc_text(uid, canon_name)).strip()[:limit]
         if canon:
