@@ -3040,7 +3040,9 @@ async function runRef(mode) {
   refBusy = true;
   $("refFind").disabled = true;
   $("refStuck").disabled = true;
-  out.innerHTML = '<span class="ad-wait">正在读' + source + "…（十几秒）</span>";
+  // 联网版要跑三段（判断难题 → 搜索 → 组织答案），一两分钟，先说清楚免得以为卡死
+  out.innerHTML = '<span class="ad-wait">正在读' + source +
+    (mode === "find" ? "…联网找参考要一两分钟" : "…（十几秒）") + "</span>";
 
   try {
     const data = await api("/reference-advisor", {

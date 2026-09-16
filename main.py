@@ -881,20 +881,20 @@ async def _moonshot_post(body: dict) -> dict:
     return payload
 
 
-async def moonshot_chat(system: str, user: str, max_tokens: int = 2000, *,
-                        model: str = "", tools=None, max_tool_rounds: int = 2,
-                        thinking=None):
-    """调用 Kimi，返回 (正文, 元信息)。失败抛 RuntimeError，由端点统一转成 {ok:false}。
+async def moonshot_run(messages: list, max_tokens: int = 2000, *,
+                       model: str = "", tools=None, max_tool_rounds: int = 2,
+                       thinking=None):
+    """跑一段对话（含 Moonshot 内置工具循环），返回 (正文, 元信息)。
 
-    传 tools 时跑 Moonshot 内置工具循环（目前只用 $web_search）。它的约定是：
-    搜索在它服务端执行，客户端只需把 tool_call 的 arguments 原样回传，并且每轮
-    都重传 tools 声明。最后一轮故意不给工具，逼它收口，免得无限搜下去。
-    实测国际站 kimi-k3 第二轮必报 tokenization failed，工具循环要配 kimi-k2.6。"""
+    messages 会被**就地追加**助手与工具消息，所以调用方可以接着往后加一轮
+    user 继续同一条链——参考顾问的三段式就靠这个：搜索结果只存在于
+    Moonshot 服务端、客户端只拿得到 search_id，必须留在同一条链里才有效。
+
+    工具约定：tool_call 的 arguments 原样回传当 tool 消息内容，每轮重传
+    tools 声明。最后一轮故意不给工具，逼它收口。"""
     if not MOONSHOT_API_KEY:
         raise RuntimeError("未配置 MOONSHOT_API_KEY")
 
-    messages = [{"role": "system", "content": system},
-                {"role": "user", "content": user}]
     searched = 0
     for round_ in range(max_tool_rounds + 1):
         # 不发 temperature：官方 kimi-k3 只接受 1，发别的值直接 400。
@@ -938,9 +938,17 @@ async def moonshot_chat(system: str, user: str, max_tokens: int = 2000, *,
                 f"模型把 token 全用在思维链上了（推理 {used or '?'} / 上限 {max_tokens}），正文为空。"
                 "两种成因：MOONSHOT_REASONING_EFFORT 没设成 low；或者这次输入太长、"
                 "max_tokens 不够——选中一段再问，或少标几段")
+        messages.append({"role": "assistant", "content": content})
         return content, {"searched": searched}
 
     raise RuntimeError("工具循环没有收口")   # 到不了：最后一轮没给工具
+
+
+async def moonshot_chat(system: str, user: str, max_tokens: int = 2000, **kw):
+    """单轮问答。失败抛 RuntimeError，由端点统一转成 {ok:false}。"""
+    return await moonshot_run(
+        [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        max_tokens, **kw)   # 到不了：最后一轮没给工具
 
 
 ASK_TEMPLATE = """下面是《{book}》的世界观权威设定（{canon_name}）：
@@ -1189,6 +1197,63 @@ async def kimi_diag(req: KimiDiagRequest):
     }
 
 
+REF_BRIEF_SYS = "你是剧本顾问。只回答问题本身，不写寒暄。"
+
+REF_BRIEF_USER = """<场次>
+{text}
+</场次>
+
+这几场在处理什么**写作难题**？不是讲什么故事，是难在哪——按"摄影机拍不到的东西
+在剧本里不存在"这把尺子，通常是某个内在的东西必须外化成看得见听得见的东西。
+
+两行，不要多写：
+第一行：一句话说难题。
+第二行：你会拿去搜索的关键词——**描述难题，不要题材词**。"""
+
+REF_SEARCH_USER = """这几场剧本的写作难题：
+{brief}
+
+搜索处理过同类难题的影视作品与具体场次。"""
+
+REF_COMPOSE_USER = """现在按下面的规则，把上面搜到的东西整理成给作者的回答。
+
+<规则>
+{persona}
+</规则>
+{canon_block}{taste_block}{recent_block}{notes_block}
+<场次>
+{text}
+</场次>"""
+
+
+async def ref_three_stage(persona: str, blocks: dict, text: str):
+    """联网版的「找参考」，分三段跑。
+
+    起因：k2.6 在长输入下思维链会失控——给多少 max_tokens 烧多少，正文为空
+    （实测 7999/8000，258 秒）。而关掉思维链它又不再决定去搜索，也不再执行
+    "推荐完对照参考库自检"这类需要动脑的规则。
+
+    拆开就不冲突了：需要动脑的两步（判断难题、决定搜什么）只喂正文，输入小，
+    思维链开着也不会失控；输入大的那步（把人格、设定、参考库压进来组织成答案）
+    此时思考已经做完，关掉思维链正好，参考库在这一步只当照着比对的排除清单。
+    """
+    brief, _ = await moonshot_chat(
+        REF_BRIEF_SYS, REF_BRIEF_USER.format(text=text), 600,
+        model=MOONSHOT_REF_MODEL, thinking={"type": "enabled"})
+
+    msgs = [{"role": "system", "content": REF_BRIEF_SYS},
+            {"role": "user", "content": REF_SEARCH_USER.format(brief=brief or text[:500])}]
+    _, meta = await moonshot_run(
+        msgs, 1500, model=MOONSHOT_REF_MODEL, tools=REF_TOOLS,
+        thinking={"type": "enabled"})
+
+    msgs.append({"role": "user",
+                 "content": REF_COMPOSE_USER.format(persona=persona, text=text, **blocks)})
+    answer, _ = await moonshot_run(
+        msgs, 8000, model=MOONSHOT_REF_MODEL, thinking={"type": "disabled"})
+    return answer, meta
+
+
 @app.post("/reference-advisor")
 async def reference_advisor(req: RefAdvisorRequest):
     uid = await writing_uid_from_token(req.token)
@@ -1271,10 +1336,14 @@ async def reference_advisor(req: RefAdvisorRequest):
         # k2.6 的思维链就跟着涨，3000 会被推理吃光导致正文为空（实测 3000 时
         # reasoning 用到 1571-2569，给到 8000 反而只用 204）。max_tokens 是上限
         # 不是消耗，调大不额外花钱。
-        answer, meta = await moonshot_chat(
-            persona, user_msg, 8000, model=MOONSHOT_REF_MODEL,
-            tools=REF_TOOLS if use_search else None,
-            thinking={"type": "disabled"})
+        if use_search:
+            answer, meta = await ref_three_stage(
+                persona, {"canon_block": canon_block, "taste_block": taste_block,
+                          "recent_block": recent_block, "notes_block": notes_block}, text)
+        else:
+            answer, meta = await moonshot_chat(
+                persona, user_msg, 8000, model=MOONSHOT_REF_MODEL,
+                thinking={"type": "disabled"})
     except ModelNotAvailable as e:
         # 八成是 base_url 回到了中转站。退回主模型、不联网，顾问照常能用；
         # 提示里说明降级了，Railway 配置修好会自动恢复，不用重部署。
