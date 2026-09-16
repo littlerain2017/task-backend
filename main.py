@@ -842,7 +842,8 @@ async def moonshot_chat(system: str, user: str, max_tokens: int = 2000) -> str:
     # 只对 429 重试，其它状态码交给下面的统一错误处理。
     for attempt in range(2):
         try:
-            async with httpx.AsyncClient(timeout=120) as client:
+            # 240 而不是 120：读整篇长稿 + 六千字设定背景时，推理加生成能跑到两三分钟
+            async with httpx.AsyncClient(timeout=240) as client:
                 resp = await client.post(
                     MOONSHOT_URL,
                     headers={
@@ -851,8 +852,12 @@ async def moonshot_chat(system: str, user: str, max_tokens: int = 2000) -> str:
                     },
                     json=body,
                 )
+        except httpx.TimeoutException:
+            # 超时异常的 str 是空的，直接抛会得到「网络错误: 」这种查不出东西的信息
+            raise RuntimeError("Kimi 超时了——大概是这次读的内容太长。"
+                               "选中一段再问，或者少标几段")
         except httpx.HTTPError as e:
-            raise RuntimeError(f"网络错误: {e}")
+            raise RuntimeError(f"网络错误: {type(e).__name__} {e}")
 
         if resp.status_code != 429 or attempt:
             break
