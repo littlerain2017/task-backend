@@ -804,6 +804,21 @@ async def advisor_find_doc(uid: str, prefix: str, starts: str) -> str:
     return ""
 
 
+async def ref_find_taste(uid: str, prefix: str) -> str:
+    """作者自己整理的参考库。跟 advisor_find_doc 不同，这里要进子目录——
+    她的文件组织是 THE ROOM/设定/references.md，不在书的根目录。"""
+    docs = await writing_doc_metas(uid)
+    for n in sorted(d.get("name", "") for d in docs):
+        if not n.startswith(prefix):
+            continue
+        if not prefix and "/" in n:   # 根书架：startswith("") 什么都匹配，得把别的书挡掉
+            continue
+        base = n.rsplit("/", 1)[-1].lower()
+        if "reference" in base or "参考" in base:
+            return n
+    return ""
+
+
 async def advisor_doc_text(uid: str, name: str) -> str:
     if not name:
         return ""
@@ -1021,6 +1036,7 @@ async def scifi_advisor(req: ScifiAdvisorRequest):
 REF_TEXT_LIMIT = 12000   # 超出部分截掉：找参考不需要读完整章，且要控住延迟与成本
 REF_CANON_LIMIT = 6000   # 背景只用来定位主题，不需要全文
 REF_NOTES_LIMIT = 2000   # 批注通常很短，多了说明是在当草稿本用
+REF_TASTE_LIMIT = 5000   # 作者自己的参考库：品味坐标 + 排除清单
 
 
 class RefAdvisorRequest(BaseModel):
@@ -1039,6 +1055,14 @@ REF_CANON_BLOCK = """
 </背景>
 """
 
+REF_TASTE_BLOCK = """
+作者自己整理的参考库（{taste_name}）。**这是她的品味坐标，也是排除清单**——
+里面的作品她已经知道，不要再推荐；但要看清她在哪一脉上，推荐落在同一脉或相邻的脉：
+<参考库>
+{taste}
+</参考库>
+"""
+
 REF_NOTES_BLOCK = """
 作者在这个本子里留给自己的批注（**不是正文**，是她自己的疑问和提醒——
 往往就是她真正卡住的地方，比稿面上看得出来的更准）：
@@ -1049,7 +1073,7 @@ REF_NOTES_BLOCK = """
 """
 
 REF_FIND_TEMPLATE = """作者正在写{where}。
-{canon_block}{notes_block}
+{canon_block}{taste_block}{notes_block}
 下面是她要你看的文字：
 
 <场次>
@@ -1068,7 +1092,7 @@ REF_FIND_TEMPLATE = """作者正在写{where}。
 """
 
 REF_STUCK_TEMPLATE = """作者正在写{where}，卡住了。
-{canon_block}{notes_block}
+{canon_block}{taste_block}{notes_block}
 她卡的地方：
 {question}
 {text_block}
@@ -1116,6 +1140,19 @@ async def reference_advisor(req: RefAdvisorRequest):
         print(f"[ref] 读取《{book}》设定失败，按无背景继续: {e}")
         canon_name = ""
 
+    # 作者自己的参考库，读不到就空着
+    taste_block, taste_name = "", ""
+    try:
+        taste_name = await ref_find_taste(uid, advisor_book_prefix(name))
+        taste = (await advisor_doc_text(uid, taste_name)).strip()[:REF_TASTE_LIMIT]
+        if taste:
+            taste_block = REF_TASTE_BLOCK.format(taste_name=taste_name, taste=taste)
+        else:
+            taste_name = ""
+    except (RuntimeError, ValueError, OSError) as e:
+        print(f"[ref] 读取《{book}》参考库失败，按无参考库继续: {e}")
+        taste_name = ""
+
     notes = req.notes.strip()[:REF_NOTES_LIMIT]
     notes_block = REF_NOTES_BLOCK.format(notes=notes) if notes else ""
 
@@ -1123,15 +1160,16 @@ async def reference_advisor(req: RefAdvisorRequest):
         if not text:
             return {"ok": False, "error": "先在正文里选中一段，或打开一篇有内容的文档"}
         user_msg = REF_FIND_TEMPLATE.format(
-            where=where, canon_block=canon_block, notes_block=notes_block, text=text,
+            where=where, canon_block=canon_block, taste_block=taste_block,
+            notes_block=notes_block, text=text,
         )
     else:
         if not question:
             return {"ok": False, "error": "先说说你卡在哪"}
         text_block = f"\n相关的场次：\n<场次>\n{text}\n</场次>\n" if text else ""
         user_msg = REF_STUCK_TEMPLATE.format(
-            where=where, canon_block=canon_block, notes_block=notes_block,
-            question=question, text_block=text_block,
+            where=where, canon_block=canon_block, taste_block=taste_block,
+            notes_block=notes_block, question=question, text_block=text_block,
         )
 
     try:
@@ -1151,5 +1189,5 @@ async def reference_advisor(req: RefAdvisorRequest):
         return {"ok": False, "error": "Kimi 返回了空内容"}
 
     return {"ok": True, "mode": mode, "answer": answer, "book": book,
-            "chars": len(text), "canon": canon_name,
+            "chars": len(text), "canon": canon_name, "taste": taste_name,
             "notes": len(notes.split("\n---\n")) if notes else 0}

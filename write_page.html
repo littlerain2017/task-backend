@@ -3020,7 +3020,8 @@ async function runRef(mode) {
       out.innerHTML = advisorRender(data.answer);
       $("refHint").textContent =
         `依据《${data.book}》· ${source} ${data.chars} 字` +
-        (data.canon ? ` · 背景 ${data.canon}` : " · 无 00_ 设定") +
+        (data.canon ? ` · 背景 ${data.canon.split("/").pop()}` : " · 无 00_ 设定") +
+        (data.taste ? ` · 参考库 ${data.taste.split("/").pop()}` : "") +
         (data.notes ? ` · 批注 ${data.notes} 条` : "");
     }
   } catch (e) {
