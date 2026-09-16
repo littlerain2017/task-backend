@@ -1,7 +1,7 @@
 """writing_logic 单元测试。"""
 import unittest
 
-from writing_logic import aggregate_file_docs, build_daily, count_text
+from writing_logic import aggregate_file_docs, build_daily, cjk_to_int, count_text, doc_sort_key
 
 
 class TestCountText(unittest.TestCase):
@@ -89,6 +89,53 @@ class TestBuildDaily(unittest.TestCase):
         d = build_daily("u1", "2026-07-07",
                         {"a.md": {"cjk": 100, "en": 0}, "b.md": {"cjk": 40, "en": 0}}, first, 2)
         self.assertEqual(d["deltaCjk"], 40)
+
+
+class TestCjkToInt(unittest.TestCase):
+    def test_single_digits(self):
+        self.assertEqual(cjk_to_int("三"), 3)
+        self.assertEqual(cjk_to_int("九"), 9)
+
+    def test_tens_with_implied_one(self):
+        self.assertEqual(cjk_to_int("十"), 10)
+        self.assertEqual(cjk_to_int("十七"), 17)
+
+    def test_compound(self):
+        self.assertEqual(cjk_to_int("二十三"), 23)
+        self.assertEqual(cjk_to_int("三十"), 30)
+        self.assertEqual(cjk_to_int("一百零八"), 108)
+        self.assertEqual(cjk_to_int("一百二十三"), 123)
+
+    def test_non_numeric_returns_none(self):
+        self.assertIsNone(cjk_to_int("篇"))
+        self.assertIsNone(cjk_to_int("三章"))
+
+
+class TestDocSortKey(unittest.TestCase):
+    def test_third_chapter_lands_between_second_and_fourth(self):
+        """码点顺序是 一 < 三 < 二 < 四，第三章曾因此排到第一章和第二章中间。"""
+        names = ["结婚员绑定系统/第一章.md", "结婚员绑定系统/第二章.md",
+                 "结婚员绑定系统/第二章_v2.md", "结婚员绑定系统/第三章.md",
+                 "结婚员绑定系统/第四章.md"]
+        self.assertEqual([n.split("/")[1] for n in sorted(names, key=doc_sort_key)],
+                         ["第一章.md", "第二章.md", "第二章_v2.md", "第三章.md", "第四章.md"])
+
+    def test_double_digit_chapter_after_single(self):
+        names = ["第九章.md", "第十章.md", "第十一章.md", "第二十章.md"]
+        self.assertEqual(sorted(names, key=doc_sort_key),
+                         ["第九章.md", "第十章.md", "第十一章.md", "第二十章.md"])
+
+    def test_arabic_numerals_zero_padded(self):
+        names = ["营救麦克黄/第5集.md", "营救麦克黄/第10集.md", "营救麦克黄/第07集.md"]
+        self.assertEqual([n.split("/")[1] for n in sorted(names, key=doc_sort_key)],
+                         ["第5集.md", "第07集.md", "第10集.md"])
+
+    def test_book_title_digits_not_parsed(self):
+        """《百年孤独》里的「百」不在「第」后面，不该被当成 100。"""
+        self.assertEqual(doc_sort_key("百年孤独.md"), "百年孤独.md")
+
+    def test_name_without_numbers_unchanged(self):
+        self.assertEqual(doc_sort_key("新篇章.md"), "新篇章.md")
 
 
 if __name__ == "__main__":

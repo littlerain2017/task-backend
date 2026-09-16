@@ -158,7 +158,7 @@ import base64
 import hashlib
 import secrets
 from typing import Optional
-from writing_logic import aggregate_file_docs, build_daily, count_text
+from writing_logic import aggregate_file_docs, build_daily, count_text, doc_sort_key
 
 WRITING_APPID = os.environ.get("WRITING_APPID", "wxff2f10ce15321b4a")
 WRITING_APPSECRET = os.environ.get("WRITING_APPSECRET", "af1333432c29946412e52b37c805d836")
@@ -330,7 +330,7 @@ async def writing_docs_list(req: DocsListRequest):
         return {"ok": False, "error": "无效令牌"}
     try:
         docs = await writing_doc_metas(uid)
-        docs.sort(key=lambda d: d.get("name", ""))
+        docs.sort(key=lambda d: doc_sort_key(d.get("name", "")))
         today = None
         if req.date and DATE_RE.match(req.date):
             daily = await writing_query_doc("daily", f"{uid}:{req.date}")

@@ -20,6 +20,45 @@ def count_text(text):
     return len(CJK_RE.findall(t)), len(EN_WORD_RE.findall(t))
 
 
+# 章节名按字面排会乱序：中文数字的码点顺序是 一(4E00) < 三(4E09) < 二(4E8C) < 四(56DB)，
+# 「第三章」于是排到第一章和第二章中间，看列表的人会以为它根本没同步上来。
+# 只解析「第…」后面的中文数字——《百年孤独》这类书名里的「百」不该被当成 100。
+CJK_DIGITS = {"零": 0, "〇": 0, "一": 1, "二": 2, "三": 3, "四": 4,
+              "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "两": 2}
+CJK_UNITS = {"十": 10, "百": 100, "千": 1000}
+CJK_CHAPTER_RE = re.compile(r"第([零〇一二三四五六七八九十百千两]+)")
+DIGITS_RE = re.compile(r"\d+")
+
+
+def cjk_to_int(s):
+    """「十七」→17，「二十三」→23，「一百零八」→108。出现非数字字符返回 None。"""
+    total = section = 0
+    for ch in s:
+        if ch in CJK_DIGITS:
+            section = CJK_DIGITS[ch]
+        elif ch in CJK_UNITS:
+            section = section or 1  # 「十七」省略了开头那个「一」
+            total += section * CJK_UNITS[ch]
+            section = 0
+        else:
+            return None
+    return total + section
+
+
+def doc_sort_key(name):
+    """文件名排序键：中文章节号转成阿拉伯数字，所有数字补零到 6 位再按字面比较。
+
+    「第三章.md」→「第000003章.md」，于是它落在第二章和第四章之间；
+    「第05集.md」这类本来就用阿拉伯数字的也一并对齐，两位数不再排到个位数前面。
+    """
+    def to_arabic(m):
+        n = cjk_to_int(m.group(1))
+        return m.group(0) if n is None else "第%d" % n
+
+    return DIGITS_RE.sub(lambda m: m.group(0).zfill(6),
+                         CJK_CHAPTER_RE.sub(to_arabic, name))
+
+
 def build_daily(uid, date_id, counts, existing_daily, now_ms, active_ms_add=0, prev_daily=None):
     """根据当前上报与已有当日记录，生成新的 daily 文档。
 
