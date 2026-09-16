@@ -981,7 +981,7 @@
         <button class="btn" onclick="addNote()" title="给当前段落写一条批注（⌘/）">批注</button>
         <button class="btn" onclick="toggleMark()" title="标记/取消标记当前段落（⌘M），⌘⇧M 跳转书签">标记</button>
         <button class="btn" id="advisorBtn" onclick="toggleAdvisor()" title="科幻顾问：问设定 / 查冲突">顾问</button>
-        <button class="btn" id="refBtn" onclick="toggleRef()" title="参考顾问：给这段找参考 / 卡住了。选中一段按 ⌥R 可直接问">参考</button>
+        <button class="btn" id="refBtn" onclick="toggleRef()" title="剧本参考顾问：给这几场找参考 / 卡住了。选中后按 ⌥R 可直接问">参考</button>
         <div class="more-wrap">
           <button class="btn" onclick="toggleMore()" title="更多">⋯</button>
           <div id="moreMenu">
@@ -1049,11 +1049,11 @@
 
   <div id="refPanel" class="ad-panel">
     <div class="ad-head">
-      <span class="ad-title">参考顾问</span>
+      <span class="ad-title">剧本参考顾问</span>
       <button class="ad-x" onclick="closeRef()" title="关闭">✕</button>
     </div>
     <div class="ad-body">
-      <textarea id="refQ" placeholder="卡在哪？「这场戏推不下去 / 落不到纸上 / 写出来觉得俗」——找参考可以留空"></textarea>
+      <textarea id="refQ" placeholder="卡在哪？「这场进不去 / 内心落不到动作上 / 对白太直白 / 信息一交代就假」——找参考可留空"></textarea>
       <div class="ad-row">
         <button class="ad-go" id="refFind" onclick="runRef('find')">找参考</button>
         <button class="ad-go" id="refStuck" onclick="runRef('stuck')">卡住了</button>
@@ -1069,7 +1069,7 @@
     <span class="sw" data-c="green"  style="background:#8fc99a" title="绿"></span>
     <span class="sw" data-c="cyan"   style="background:#79c3c3" title="青"></span>
     <span class="sw" data-c="violet" style="background:#b6a0da" title="紫"></span>
-    <button class="clr" data-c="ask" title="标为「要问顾问的部分」。标过之后按 ⌥R，顾问只读这些段">问</button>
+    <button class="clr" data-c="ask" title="标为「要问顾问的场次」。标过之后按 ⌥R，顾问只读这些段">问</button>
     <button class="clr" data-c="strike" title="删除线（⌘⇧X）">S̶</button>
     <button class="clr" data-c="clear" title="清掉选区内的高亮与删除线">清除</button>
   </div>
