@@ -3038,6 +3038,7 @@ async function runRef(mode) {
         `依据《${data.book}》· ${source} ${data.chars} 字` +
         (data.canon ? ` · 背景 ${data.canon.split("/").pop()}` : " · 无 00_ 设定") +
         (data.taste ? ` · 参考库 ${data.taste.split("/").pop()}` : "") +
+        (data.searched ? ` · 联网搜了 ${data.searched} 次` : "") +
         (data.notes ? ` · 批注 ${data.notes} 条` : "");
     }
   } catch (e) {

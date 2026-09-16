@@ -837,24 +837,8 @@ async def advisor_persona(uid: str, prefix: str):
     return base, "通用底座（本书无 _advisor.md，缺项目坐标）"
 
 
-async def moonshot_chat(system: str, user: str, max_tokens: int = 2000) -> str:
-    """调用 Kimi。失败时抛 RuntimeError，由端点统一转成 {ok:false}。"""
-    if not MOONSHOT_API_KEY:
-        raise RuntimeError("未配置 MOONSHOT_API_KEY")
-    # 不发 temperature：官方 kimi-k3 只接受 1，发别的值直接 400。
-    body = {
-        "model": MOONSHOT_MODEL,
-        "max_tokens": max_tokens,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-    }
-    if MOONSHOT_REASONING_EFFORT:
-        body["reasoning_effort"] = MOONSHOT_REASONING_EFFORT
-
-    # 代理站会瞬时限流（实测三次里中一次），隔几秒重发通常就过了。
-    # 只对 429 重试，其它状态码交给下面的统一错误处理。
+async def _moonshot_post(body: dict) -> dict:
+    """单次请求：429 重试一次、超时与网络错误转成能看懂的 RuntimeError。"""
     for attempt in range(2):
         try:
             # 240 而不是 120：读整篇长稿 + 六千字设定背景时，推理加生成能跑到两三分钟
@@ -873,7 +857,7 @@ async def moonshot_chat(system: str, user: str, max_tokens: int = 2000) -> str:
                                "选中一段再问，或者少标几段")
         except httpx.HTTPError as e:
             raise RuntimeError(f"网络错误: {type(e).__name__} {e}")
-
+        # 代理站会瞬时限流，隔几秒重发通常就过了；只对 429 重试
         if resp.status_code != 429 or attempt:
             break
         print("[kimi] 429，3 秒后重试一次")
@@ -881,23 +865,64 @@ async def moonshot_chat(system: str, user: str, max_tokens: int = 2000) -> str:
 
     if resp.status_code != 200:
         raise RuntimeError(f"Kimi 返回 {resp.status_code}: {resp.text[:200]}")
-
     payload = resp.json()
     # 中转站有时把 OpenAI 标准响应多包一层 data，两种都认。
     if isinstance(payload.get("data"), dict) and "choices" in payload["data"]:
         payload = payload["data"]
-    choices = payload.get("choices") or []
-    if not choices:
-        raise RuntimeError(f"Kimi 响应异常: {str(payload)[:200]}")
+    return payload
 
-    msg = choices[0].get("message") or {}
-    content = (msg.get("content") or "").strip()
-    # 推理模型不限深度时会把 token 全烧在思维链上，正文为空。单看
-    # 「返回了空内容」这个故障根本查不出来，所以把解法写进错误信息里。
-    if not content and (msg.get("reasoning_content") or "").strip():
-        raise RuntimeError("模型把 token 全用在思维链上了，正文为空——"
-                           "把环境变量 MOONSHOT_REASONING_EFFORT 设成 low 即可")
-    return content
+
+async def moonshot_chat(system: str, user: str, max_tokens: int = 2000, *,
+                        model: str = "", tools=None, max_tool_rounds: int = 3):
+    """调用 Kimi，返回 (正文, 元信息)。失败抛 RuntimeError，由端点统一转成 {ok:false}。
+
+    传 tools 时跑 Moonshot 内置工具循环（目前只用 $web_search）。它的约定是：
+    搜索在它服务端执行，客户端只需把 tool_call 的 arguments 原样回传，并且每轮
+    都重传 tools 声明。最后一轮故意不给工具，逼它收口，免得无限搜下去。
+    实测国际站 kimi-k3 第二轮必报 tokenization failed，工具循环要配 kimi-k2.6。"""
+    if not MOONSHOT_API_KEY:
+        raise RuntimeError("未配置 MOONSHOT_API_KEY")
+
+    messages = [{"role": "system", "content": system},
+                {"role": "user", "content": user}]
+    searched = 0
+    for round_ in range(max_tool_rounds + 1):
+        # 不发 temperature：官方 kimi-k3 只接受 1，发别的值直接 400。
+        body = {"model": model or MOONSHOT_MODEL, "max_tokens": max_tokens,
+                "messages": messages}
+        if MOONSHOT_REASONING_EFFORT:
+            body["reasoning_effort"] = MOONSHOT_REASONING_EFFORT
+        if tools and round_ < max_tool_rounds:
+            body["tools"] = tools
+
+        payload = await _moonshot_post(body)
+        choices = payload.get("choices") or []
+        if not choices:
+            raise RuntimeError(f"Kimi 响应异常: {str(payload)[:200]}")
+        ch = choices[0]
+        msg = ch.get("message") or {}
+        calls = msg.get("tool_calls") or []
+
+        if calls and ch.get("finish_reason") == "tool_calls" and "tools" in body:
+            messages.append({"role": "assistant", "content": msg.get("content") or "",
+                             "tool_calls": calls})
+            for tc in calls:
+                fn = tc.get("function") or {}
+                messages.append({"role": "tool", "tool_call_id": tc.get("id"),
+                                 "name": fn.get("name"),
+                                 "content": fn.get("arguments") or "{}"})
+                searched += 1
+            continue
+
+        content = (msg.get("content") or "").strip()
+        # 推理模型不限深度时会把 token 全烧在思维链上，正文为空。单看
+        # 「返回了空内容」这个故障根本查不出来，所以把解法写进错误信息里。
+        if not content and (msg.get("reasoning_content") or "").strip():
+            raise RuntimeError("模型把 token 全用在思维链上了，正文为空——"
+                               "把环境变量 MOONSHOT_REASONING_EFFORT 设成 low 即可")
+        return content, {"searched": searched}
+
+    raise RuntimeError("工具循环没有收口")   # 到不了：最后一轮没给工具
 
 
 ASK_TEMPLATE = """下面是《{book}》的世界观权威设定（{canon_name}）：
@@ -1017,7 +1042,7 @@ async def scifi_advisor(req: ScifiAdvisorRequest):
         max_tokens = 2500
 
     try:
-        answer = await moonshot_chat(persona, user_msg, max_tokens)
+        answer, _ = await moonshot_chat(persona, user_msg, max_tokens)
     except RuntimeError as e:
         print(f"[advisor] Kimi 调用失败: {e}")
         return {"ok": False, "error": str(e)}
@@ -1037,6 +1062,10 @@ REF_TEXT_LIMIT = 12000   # 超出部分截掉：找参考不需要读完整章�
 REF_CANON_LIMIT = 6000   # 背景只用来定位主题，不需要全文
 REF_NOTES_LIMIT = 2000   # 批注通常很短，多了说明是在当草稿本用
 REF_TASTE_LIMIT = 5000   # 作者自己的参考库：品味坐标 + 排除清单
+# 参考顾问单独选模型：国际站 kimi-k3 多轮工具必挂（tokenization failed），k2.6 好用且快三倍
+MOONSHOT_REF_MODEL = os.environ.get("MOONSHOT_REF_MODEL", "kimi-k2.6").strip()
+MOONSHOT_REF_SEARCH = os.environ.get("MOONSHOT_REF_SEARCH", "1").strip() != "0"
+REF_TOOLS = [{"type": "builtin_function", "function": {"name": "$web_search"}}]
 
 
 class RefAdvisorRequest(BaseModel):
@@ -1190,8 +1219,12 @@ async def reference_advisor(req: RefAdvisorRequest):
         return {"ok": False, "error": "服务器内部错误"}
 
     try:
-        # 要列 2-4 部作品、每部三条，天然比科幻顾问的回答长，给宽一点免得截断
-        answer = await moonshot_chat(persona, user_msg, 3000)
+        # 要列 2-4 部作品、每部三条，天然比科幻顾问的回答长，给宽一点免得截断。
+        # 只在「找参考」开搜索：「卡住了」以做法为主，搜索只会把它拉回书单。
+        use_search = MOONSHOT_REF_SEARCH and mode == "find"
+        answer, meta = await moonshot_chat(
+            persona, user_msg, 3000,
+            model=MOONSHOT_REF_MODEL, tools=REF_TOOLS if use_search else None)
     except RuntimeError as e:
         print(f"[ref] Kimi 调用失败: {e}")
         return {"ok": False, "error": str(e)}
@@ -1201,4 +1234,5 @@ async def reference_advisor(req: RefAdvisorRequest):
 
     return {"ok": True, "mode": mode, "answer": answer, "book": book,
             "chars": len(text), "canon": canon_name, "taste": taste_name,
+            "searched": meta["searched"],
             "notes": len(notes.split("\n---\n")) if notes else 0}
