@@ -431,6 +431,8 @@
   ::highlight(hl-green)  { color: #8fc99a; }
   ::highlight(hl-cyan)   { color: #79c3c3; }
   ::highlight(hl-violet) { color: #b6a0da; }
+  /* 顾问标记：用底色而不是字色，跟上面五个纯色区分开——它不是分类，是待办 */
+  ::highlight(hl-ask) { color: var(--gold); background-color: rgba(211, 178, 92, 0.22); }
 
   /* 彩色高亮：选中文字上色，用于区分修改/待办等 */
 
@@ -1067,6 +1069,7 @@
     <span class="sw" data-c="green"  style="background:#8fc99a" title="绿"></span>
     <span class="sw" data-c="cyan"   style="background:#79c3c3" title="青"></span>
     <span class="sw" data-c="violet" style="background:#b6a0da" title="紫"></span>
+    <button class="clr" data-c="ask" title="标为「要问顾问的部分」。标过之后按 ⌥R，顾问只读这些段">问</button>
     <button class="clr" data-c="strike" title="删除线（⌘⇧X）">S̶</button>
     <button class="clr" data-c="clear" title="清掉选区内的高亮与删除线">清除</button>
   </div>
@@ -2277,7 +2280,9 @@ function escapeHtml(s) {
 }
 
 /* ===== 彩色高亮：选中文字上色（存储与正文分离，不污染 .md） ===== */
-const HL_COLORS = ["red", "amber", "green", "cyan", "violet"];
+// "ask" 不是颜色，是「要问顾问的部分」。混进这个数组是为了白嫖整套高亮设施：
+// 存储、锚点自愈、清除、云端同步全都现成，参考顾问只要筛 color === "ask"。
+const HL_COLORS = ["red", "amber", "green", "cyan", "violet", "ask"];
 
 // 把存储的高亮渲染进段落（重建 innerHTML，只对非当前光标所在段安全调用）
 const STRIKE_RE = /~~([^~\n]+)~~/g;
@@ -2550,6 +2555,8 @@ function applyHighlight(color) {
   if (color === "clear") {
     if (struck) { dirty = true; save(); }   // 删除线改的是正文，要落盘
     setSync(`已清除标记${n}`, "ok");
+  } else if (color === "ask") {
+    setSync(`已标给顾问${n}，按 ⌥R 提问`, "ok");
   } else {
     setSync(`已高亮${n}`, "ok");
   }
@@ -2944,6 +2951,15 @@ function closeRef() {
   $("refPanel").classList.remove("open");
 }
 
+/* 标了「问」的段落，按阅读顺序。highlights 里存的 text 就是标记时的原文，
+   段落改动后由 renderHighlights 的锚点自愈负责更新，这里直接用。 */
+function askMarks() {
+  return (current?.highlights || [])
+    .filter((h) => h.color === "ask" && h.text)
+    .sort((a, b) => (a.idx - b.idx) || (a.start - b.start))
+    .map((h) => h.text);
+}
+
 /* ⌥R 的落点：钉住选区 → 开面板 → 直接跑，不用再点一次按钮。
    先把选区存进 advisorLastSel 再开面板——面板一开正文就失焦，
    到 runRef 里 document.getSelection() 可能已经空了。 */
@@ -2973,10 +2989,13 @@ async function runRef(mode) {
     return;
   }
 
-  // 选中优先；没选中就整篇。批注单独抽出来给顾问，不混在正文里。
+  // 三级取材：当下选中的 > 标了「问」的段 > 整篇。
+  // 选中排第一是因为它是此刻的动作，意图比之前留下的标记更明确。
   const full = getEditorContent();
-  const text = picked || stripNotes(full).trim();
+  const marked = askMarks();
+  const text = picked || marked.join("\n\n") || stripNotes(full).trim();
   const notes = collectNotes(full);
+  const source = picked ? "选中段落" : marked.length ? `${marked.length} 段标记` : "整篇";
   if (mode === "find" && !text) {
     out.innerHTML = '<span class="ad-err">这篇还是空的，先写点东西。</span>';
     return;
@@ -2985,8 +3004,7 @@ async function runRef(mode) {
   refBusy = true;
   $("refFind").disabled = true;
   $("refStuck").disabled = true;
-  out.innerHTML = '<span class="ad-wait">' +
-    (picked ? "正在读选中的段落…" : "正在读整篇…") + "（十几秒）</span>";
+  out.innerHTML = '<span class="ad-wait">正在读' + source + "…（十几秒）</span>";
 
   try {
     const data = await api("/reference-advisor", {
@@ -3001,7 +3019,7 @@ async function runRef(mode) {
     } else {
       out.innerHTML = advisorRender(data.answer);
       $("refHint").textContent =
-        `依据《${data.book}》· ${picked ? "选中段落" : "整篇"} ${data.chars} 字` +
+        `依据《${data.book}》· ${source} ${data.chars} 字` +
         (data.canon ? ` · 背景 ${data.canon}` : " · 无 00_ 设定") +
         (data.notes ? ` · 批注 ${data.notes} 条` : "");
     }
