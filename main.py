@@ -1114,6 +1114,33 @@ REF_CANON_BLOCK = """
 </背景>
 """
 
+# 只认书名号里的——它对中英文一视同仁（《Fleabag》照样抓得到）。
+# 试过顺带抓裸英文，结果把 Roy Andersson、Laura Dern、HBO，乃至作者自己的
+# 主角名 Lora 和项目名 THE ROOM 全抓进了"禁止提及"，比漏掉几部还糟。
+TITLE_CJK_RE = re.compile(r"《([^》\n]{1,40})》")
+
+
+def ref_extract_titles(taste: str, limit: int = 60) -> list:
+    """从作者的参考库里抠出作品名，给顾问当硬排除清单。
+
+    为什么要代码来抠、不交给模型：组织答案那一步思维链是关掉的，它没法
+    "读完整篇散文、认出哪些字是作品名、最后再逐一回头对照"。换成一行现成
+    的名单，避开它就只是字符串匹配——那是关掉思维链也做得了的事。
+    """
+    out, seen = [], set()
+    for m in TITLE_CJK_RE.finditer(taste):
+        t = m.group(1).strip()
+        if t and t.lower() not in seen:
+            seen.add(t.lower()); out.append(t)
+    return out[:limit]
+
+
+REF_BAN_BLOCK = """
+**【禁止推荐】以下作品作者自己的参考库里已经有了，她比你熟，一部都不许出现在你的推荐里**
+（真有哪部正好对症，只能在推荐列表之前单独一行点一句，正文的 2-4 部仍须全部来自这份清单之外）：
+{titles}
+"""
+
 REF_TASTE_BLOCK = """
 作者自己整理的参考库（{taste_name}）。**这是她的品味坐标，也是排除清单**——
 里面的作品她已经知道，不要再推荐；但要看清她在哪一脉上，推荐落在同一脉或相邻的脉：
@@ -1296,6 +1323,9 @@ async def reference_advisor(req: RefAdvisorRequest):
         taste = (await advisor_doc_text(uid, taste_name)).strip()[:REF_TASTE_LIMIT]
         if taste:
             taste_block = REF_TASTE_BLOCK.format(taste_name=taste_name, taste=taste)
+            titles = ref_extract_titles(taste)
+            if titles:
+                taste_block += REF_BAN_BLOCK.format(titles="".join(f"《{t}》" for t in titles))
         else:
             taste_name = ""
     except (RuntimeError, ValueError, OSError) as e:
