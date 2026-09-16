@@ -1249,18 +1249,26 @@ async def kimi_diag(req: KimiDiagRequest):
     }
 
 
-REF_BRIEF_SYS = "你是剧本顾问。只回答问题本身，不写寒暄。"
+def ref_ruler() -> str:
+    """人格里「尺子」那一节。三段式第一步要做判断，得把这把尺子给它；
+    但整份人格塞进去会让任务变复杂、思维链失控，所以只取这一节。"""
+    t = advisor_prompt_file("reference_advisor_prompt.md")
+    i = t.find("## 一、尺子")
+    j = t.find("\n## ", i + 1)
+    return t[i:j] if i >= 0 and j > i else ""
+
+
+REF_BRIEF_SYS = "你是剧本顾问，只回答问题本身，不写寒暄。\n\n{ruler}"
 
 REF_BRIEF_USER = """<场次>
 {text}
 </场次>
 
-这几场在处理什么**写作难题**？不是讲什么故事，是难在哪——按"摄影机拍不到的东西
-在剧本里不存在"这把尺子，通常是某个内在的东西必须外化成看得见听得见的东西。
+读这几场，按上面那把尺子做一份简短诊断。只写这三项，不要多写：
 
-两行，不要多写：
-第一行：一句话说难题。
-第二行：你会拿去搜索的关键词——**描述难题，不要题材词**。"""
+**难题**：一句话——不是讲什么故事，是难在哪，通常是某个内在的东西必须外化。
+**病灶**：稿面上你实际看到的问题，最多三条，每条指出具体是哪一句或哪个动作。看不出就写"无明显病灶"。
+**搜索词**：一行，描述难题，不要题材词。"""
 
 REF_SEARCH_USER = """这几场剧本的写作难题：
 {brief}
@@ -1268,6 +1276,11 @@ REF_SEARCH_USER = """这几场剧本的写作难题：
 搜索处理过同类难题的影视作品与具体场次。"""
 
 REF_COMPOSE_USER = """现在按下面的规则，把上面搜到的东西整理成给作者的回答。
+
+你一开始对这几场做的诊断（**直接用它，不要重新判断一遍**）：
+<诊断>
+{brief}
+</诊断>
 
 <规则>
 {persona}
@@ -1292,17 +1305,19 @@ async def ref_three_stage(persona: str, blocks: dict, text: str):
     # 2000 而不是 600：这一步思维链是开着的，原型实测光推理就用掉 984，
     # 给 600 会被它吃光、正文为空（线上踩过）。输出本身只有一两百字。
     brief, _ = await moonshot_chat(
-        REF_BRIEF_SYS, REF_BRIEF_USER.format(text=text), 2000,
+        REF_BRIEF_SYS.format(ruler=ref_ruler()),
+        REF_BRIEF_USER.format(text=text), 2500,
         model=MOONSHOT_REF_MODEL, thinking={"type": "enabled"})
 
-    msgs = [{"role": "system", "content": REF_BRIEF_SYS},
+    msgs = [{"role": "system", "content": "你是剧本顾问，只回答问题本身。"},
             {"role": "user", "content": REF_SEARCH_USER.format(brief=brief or text[:500])}]
     _, meta = await moonshot_run(
         msgs, 2000, model=MOONSHOT_REF_MODEL, tools=REF_TOOLS,
         thinking={"type": "enabled"})
 
     msgs.append({"role": "user",
-                 "content": REF_COMPOSE_USER.format(persona=persona, text=text, **blocks)})
+                 "content": REF_COMPOSE_USER.format(persona=persona, text=text,
+                                                    brief=brief, **blocks)})
     answer, _ = await moonshot_run(
         msgs, 8000, model=MOONSHOT_REF_MODEL, thinking={"type": "disabled"})
     return answer, meta
