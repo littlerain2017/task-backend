@@ -47,6 +47,33 @@ grep -n "\.remove()\|editor\.innerHTML\|querySelectorAll\|node\.textContent =" w
 
 钩子管不到 Bash 里的 `>` / `cp` / `mv`——别用那些去改书稿。
 
+## 为什么"批注和划线老是闪退"——总根源
+
+**同一份文档有三个写入方，以前只有一个会让路。**
+
+| 写入方 | 写什么 | 2026-09-17 之前 |
+|---|---|---|
+| 她的浏览器 `/write` | 云端 | 带 `baseUpdatedAt`，版本过期就报冲突 |
+| watcher | 云端（整份磁盘内容） | **不带版本号，服务端也只校验 `editor=="web"`，无条件覆盖** |
+| Claude Code / 任何本地工具 | 磁盘 | 改完就被 watcher 推上云端 |
+
+于是这条链每天都在发生：她在网页上写 → 云端是最新的 → 别的程序动了磁盘上那份（哪怕只是
+一次 `Edit`）→ watcher 把整份磁盘内容盖上去，她刚写的东西在云端没了 → 浏览器下一轮
+`refresh()` 发现云端更新，重新加载 → **屏幕上的字凭空消失**。整个过程没有一条报错，
+因为在旧规则下这是"正常同步"。
+
+三处都补齐了，缺一处这个循环就会回来：
+1. **服务端**（`docs/put`）：只要带了 `baseUpdatedAt` 就校验，不再只认 `editor=="web"`。
+2. **watcher**：推送带 `baseUpdatedAt`（`state["cloud_at"]`，启动时用 `docs/list` 一次性
+   对齐所有文档，别只在变化时记——没动过的文件会留着没版本号的洞）；被判冲突就
+   `merge_conflict()` 三方合并，共同祖先是 `~/.writing-watcher-base/` 里上次同步的内容，
+   **ours 传云端**（她正在打字的那边优先），磁盘原版进 `~/.writing-watcher-quarantine/`。
+3. **浏览器**：冲突时三方合并（见下）。
+
+**`merge3` 有两份实现**：`write_page.html`（JS）和 `watcher_client.py`（Python）。
+watcher 是单文件分发的（`/writing/watcher.py`），不能 import，所以只能复制。
+**改一处必须改另一处**，两边各有测试：`node test_merge3.js`、`python3 -m unittest test_watcher_client`。
+
 ## 写入冲突：三方合并，她那边永远不丢
 
 `docs/put` 带 `baseUpdatedAt`，版本过期就返回 `conflict`。触发条件很常见：她在网页上写的

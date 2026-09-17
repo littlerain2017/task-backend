@@ -379,10 +379,15 @@ async def writing_docs_put(req: DocsPutRequest):
         existing = await writing_query_doc("docs", doc_id)
         if existing and existing.get("readonly") and req.editor == "web":
             return {"ok": False, "error": "该文件为只读（Word 文档请在电脑上编辑）"}
-        # 网页保存时校验版本，避免覆盖电脑刚写的内容；电脑保存以磁盘为准
-        if (req.editor == "web" and req.baseUpdatedAt is not None and existing
+        # 两边都校验版本。这里以前只校验 web、"电脑保存以磁盘为准"，于是 watcher
+        # 可以无条件覆盖云端——她在网页上刚写的东西，被磁盘上那份旧稿一推就没了，
+        # 浏览器下一轮 refresh 拉回旧版，屏幕上的字凭空消失。2026-09-17 查明这是
+        # "批注和划线老是闪退"的总根源，前端的三方合并只是下游补救。
+        if (req.baseUpdatedAt is not None and existing
                 and existing.get("updatedAt") != req.baseUpdatedAt):
-            return {"ok": False, "conflict": True, "error": "文件已在电脑上更新"}
+            where = "电脑" if req.editor == "web" else "网页"
+            return {"ok": False, "conflict": True, "error": f"文件已在{where}上更新",
+                    "updatedAt": existing.get("updatedAt", 0)}
 
         now_ms = int(time_mod.time() * 1000)
         cjk, en = count_text(req.content)

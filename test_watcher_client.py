@@ -157,5 +157,199 @@ class TestNoteLossGuard(unittest.TestCase):
         self.assertTrue(wc.guard_note_loss({"token": "T"}, state, "x.md", f, None))
 
 
+class TestMerge3(unittest.TestCase):
+    """与前端 write_page.html 的 merge3 同一套算法，用例也刻意保持对应。"""
+
+    def setUp(self):
+        from watcher_client import merge3
+        self.merge3 = merge3
+
+    def L(self, *lines):
+        return "\n".join(lines)
+
+    def test_both_sides_kept(self):
+        base = self.L("第一段", "第二段", "第三段")
+        ours = self.L("第一段", "第二段改过了", "第三段")
+        theirs = self.L("第一段", "第二段", "第三段改过了")
+        text, conflicts = self.merge3(base, ours, theirs)
+        self.assertEqual(text, self.L("第一段", "第二段改过了", "第三段改过了"))
+        self.assertEqual(conflicts, 0)
+
+    def test_web_strike_survives_disk_edit(self):
+        """她在网页上划的删除线，不能被磁盘那份旧稿冲掉。"""
+        base = self.L("黄蔚妮从镜子里看一眼。", "她转过身。")
+        cloud = self.L("黄蔚妮~~从镜子里看一眼。~~", "她转过身。")
+        disk = self.L("黄蔚妮从镜子里看一眼。", "她转过身。", "颜小莉往前挪了一步。")
+        text, conflicts = self.merge3(base, cloud, disk)   # ours=云端，网页优先
+        self.assertIn("~~从镜子里看一眼。~~", text)
+        self.assertIn("颜小莉往前挪了一步。", text)
+        self.assertEqual(conflicts, 0)
+
+    def test_true_conflict_prefers_ours(self):
+        base = self.L("开头", "有争议的一行", "结尾")
+        text, conflicts = self.merge3(base, self.L("开头", "网页版", "结尾"),
+                                      self.L("开头", "磁盘版", "结尾"))
+        self.assertEqual(text, self.L("开头", "网页版", "结尾"))
+        self.assertEqual(conflicts, 1)
+
+    def test_no_base_keeps_ours_entirely(self):
+        cloud = self.L("她正在写的新稿", "第二行")
+        disk = self.L("磁盘上的旧稿")
+        text, _ = self.merge3(disk, cloud, disk)   # 没有基线时用磁盘当祖先
+        self.assertEqual(text, cloud)
+
+    def test_deletion_on_one_side_applies(self):
+        base = self.L("A", "B", "C")
+        self.assertEqual(self.merge3(base, base, self.L("A", "C"))[0], self.L("A", "C"))
+        self.assertEqual(self.merge3(base, self.L("A", "C"), base)[0], self.L("A", "C"))
+
+    def test_both_append_kept(self):
+        base = self.L("A", "B")
+        text, _ = self.merge3(base, self.L("A", "B", "网页写的"), self.L("A", "B", "磁盘写的"))
+        self.assertIn("网页写的", text)
+        self.assertIn("磁盘写的", text)
+
+    def test_identical_sides(self):
+        base, same = self.L("A", "旧"), self.L("A", "新")
+        text, conflicts = self.merge3(base, same, same)
+        self.assertEqual(text, same)
+        self.assertEqual(conflicts, 0)
+
+    def test_empty(self):
+        self.assertEqual(self.merge3("", "", "")[0], "")
+        self.assertEqual(self.merge3("", "新写的", "")[0], "新写的")
+
+
+class TestPushSendsBaseVersion(unittest.TestCase):
+    """watcher 推送必须带 baseUpdatedAt，否则服务端不校验、无条件覆盖云端。"""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.dir.name)
+        self.sent = []
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def run_push(self, cloud_at, reply):
+        import watcher_client as wc
+        path = self.root / "第01集.md"
+        path.write_text("正文\n", encoding="utf-8")
+        f = {"path": path, "content": "正文\n", "hash": "newhash",
+             "readonly": False, "notes": 0}
+        state = {"synced_hashes": {"第01集.md": "oldhash"}, "since": 0,
+                 "note_counts": {"第01集.md": 0}, "cloud_at": dict(cloud_at)}
+
+        def fake_post(p, payload):
+            self.sent.append((p, payload))
+            return reply
+        orig_post, orig_base = wc.post, wc.BASE_DIR
+        wc.post = fake_post
+        wc.BASE_DIR = self.root / "base"
+        try:
+            wc.push_changed({"token": "T"}, state, {"第01集.md": f},
+                            {"pending_ms": 0, "last_ts": 0}, None)
+        finally:
+            wc.post, wc.BASE_DIR = orig_post, orig_base
+        return state
+
+    def test_push_carries_base_updated_at(self):
+        state = self.run_push({"第01集.md": 1700}, {"ok": True, "updatedAt": 1800})
+        put = [p for p in self.sent if p[0] == "/writing/docs/put"][0][1]
+        self.assertEqual(put["baseUpdatedAt"], 1700)
+        self.assertEqual(put["editor"], "computer")
+        self.assertEqual(state["cloud_at"]["第01集.md"], 1800)
+
+    def test_first_push_without_known_version_sends_none(self):
+        self.run_push({}, {"ok": True, "updatedAt": 1800})
+        put = [p for p in self.sent if p[0] == "/writing/docs/put"][0][1]
+        self.assertIsNone(put["baseUpdatedAt"])
+
+class TestConflictMerges(unittest.TestCase):
+    """版本冲突的完整走法：取云端 → 三方合并 → 写回磁盘 → 带新版本号重推。
+
+    这是"批注和划线老是闪退"的总根源所在：以前 watcher 不带版本号，
+    磁盘上那份旧稿会无条件盖掉她在网页上刚写的内容。
+    """
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.dir.name)
+        self.sent = []
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def test_web_edit_survives_disk_push(self):
+        import watcher_client as wc
+        base = "第一句。\n第二句。\n"
+        cloud = "第一句。\n~~第二句。~~\n"                    # 她在网页上划了删除线
+        disk = "第一句。\n第二句。\n第三句。\n"                # 磁盘上被加了一句
+
+        path = self.root / "第01集.md"
+        path.write_text(disk, encoding="utf-8")
+        f = {"path": path, "content": disk, "hash": wc.sha(disk),
+             "readonly": False, "notes": 0}
+        state = {"synced_hashes": {"第01集.md": "old"}, "since": 0,
+                 "note_counts": {"第01集.md": 0}, "cloud_at": {"第01集.md": 1700}}
+
+        def fake_post(p, payload):
+            self.sent.append((p, payload))
+            if p == "/writing/docs/put":
+                if payload.get("baseUpdatedAt") == 1700:
+                    return {"ok": False, "conflict": True}     # 云端已经前进了
+                return {"ok": True, "updatedAt": 1900}
+            return {"ok": True, "content": cloud, "updatedAt": 1850}
+
+        orig = (wc.post, wc.BASE_DIR, wc.QUARANTINE_DIR)
+        wc.post, wc.BASE_DIR, wc.QUARANTINE_DIR = fake_post, self.root / "b", self.root / "q"
+        (self.root / "b").mkdir()
+        wc.base_path("第01集.md").write_text(base, encoding="utf-8")
+        try:
+            wc.push_changed({"token": "T"}, state, {"第01集.md": f},
+                            {"pending_ms": 0, "last_ts": 0}, {})
+        finally:
+            wc.post, wc.BASE_DIR, wc.QUARANTINE_DIR = orig
+
+        merged = path.read_text(encoding="utf-8")
+        self.assertIn("~~第二句。~~", merged)      # 网页上的删除线保住了
+        self.assertIn("第三句。", merged)          # 磁盘上新增的也保住了
+        puts = [pl for p, pl in self.sent if p == "/writing/docs/put"]
+        self.assertEqual(len(puts), 2)
+        self.assertEqual(puts[1]["baseUpdatedAt"], 1850)   # 重推带的是刚取回的版本号
+        self.assertEqual(puts[1]["content"], merged)
+        self.assertEqual(state["cloud_at"]["第01集.md"], 1900)
+        kept = list((self.root / "q").iterdir())           # 磁盘原版留了底
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(kept[0].read_text(encoding="utf-8"), disk)
+
+    def test_same_content_only_refreshes_version(self):
+        """内容一样只是版本号旧了：认下新版本号，不写盘不隔离。"""
+        import watcher_client as wc
+        same = "一样的内容\n"
+        path = self.root / "第01集.md"
+        path.write_text(same, encoding="utf-8")
+        f = {"path": path, "content": same, "hash": wc.sha(same), "readonly": False, "notes": 0}
+        state = {"synced_hashes": {"第01集.md": "old"}, "since": 0,
+                 "note_counts": {"第01集.md": 0}, "cloud_at": {"第01集.md": 1700}}
+
+        def fake_post(p, payload):
+            self.sent.append((p, payload))
+            if p == "/writing/docs/put":
+                return {"ok": False, "conflict": True}
+            return {"ok": True, "content": same, "updatedAt": 1850}
+
+        orig = (wc.post, wc.BASE_DIR, wc.QUARANTINE_DIR)
+        wc.post, wc.BASE_DIR, wc.QUARANTINE_DIR = fake_post, self.root / "b", self.root / "q"
+        try:
+            wc.push_changed({"token": "T"}, state, {"第01集.md": f},
+                            {"pending_ms": 0, "last_ts": 0}, {})
+        finally:
+            wc.post, wc.BASE_DIR, wc.QUARANTINE_DIR = orig
+
+        self.assertEqual(state["cloud_at"]["第01集.md"], 1850)
+        self.assertFalse((self.root / "q").exists())
+
+
 if __name__ == "__main__":
     unittest.main()
