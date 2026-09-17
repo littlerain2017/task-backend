@@ -64,10 +64,14 @@ grep -n "\.remove()\|editor\.innerHTML\|querySelectorAll\|node\.textContent =" w
 
 三处都补齐了，缺一处这个循环就会回来：
 1. **服务端**（`docs/put`）：只要带了 `baseUpdatedAt` 就校验，不再只认 `editor=="web"`。
-2. **watcher**：推送带 `baseUpdatedAt`（`state["cloud_at"]`，启动时用 `docs/list` 一次性
-   对齐所有文档，别只在变化时记——没动过的文件会留着没版本号的洞）；被判冲突就
-   `merge_conflict()` 三方合并，共同祖先是 `~/.writing-watcher-base/` 里上次同步的内容，
-   **ours 传云端**（她正在打字的那边优先），磁盘原版进 `~/.writing-watcher-quarantine/`。
+2. **watcher**：推送必须带 `baseUpdatedAt`（`state["cloud_at"]`）。**版本号不明就绝不裸推**，
+   走 `reconcile()`：先 `docs/get` 取云端，一样就记同步点，不一样就三方合并——共同祖先是
+   `~/.writing-watcher-base/` 里上次同步的内容，**ours 传云端**（她正在打字的那边优先），
+   合并结果写回磁盘并带新版本号重推，磁盘原版进 `~/.writing-watcher-quarantine/`。
+   启动时 `seed_cloud_versions()` 用 `docs/list` 对齐版本号，**只认磁盘与云端 hash 相同的**
+   （服务端 `content_hash` 与 watcher 的 `sha` 同算法）。这里踩过坑：一开始无条件认领，
+   等于宣称"磁盘这份基于云端最新版"，重启后第一次推送照样盖掉她网页上的内容——
+   自检时当场重现，测试 `TestSeedCloudVersions` 钉死了这条。
 3. **浏览器**：冲突时三方合并（见下）。
 
 **`merge3` 有两份实现**：`write_page.html`（JS）和 `watcher_client.py`（Python）。

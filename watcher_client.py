@@ -357,15 +357,18 @@ def sync_point(state, name, f, cloud_at, content=None):
     write_base(name, f["content"] if content is None else content)
 
 
-def merge_conflict(cfg, state, name, f, prev_hashes):
-    """云端比我们的基准新 → 不许覆盖，做三方合并。
+def reconcile(cfg, state, name, f, activity, prev_hashes):
+    """不确定自己基于云端哪一版时走这里：先取云端，再决定怎么办。
 
     共同祖先＝上次同步时的内容；ours＝云端（她正在网页上打字的那一边，优先）；
     theirs＝磁盘。合并结果写回磁盘并推上去，磁盘原样另存进隔离目录。
     """
     fresh = post("/writing/docs/get", {"token": cfg["token"], "name": name})
     if not fresh.get("ok"):
-        log(f"⚠ {name} 版本冲突，取云端失败（{fresh.get('error')}），本轮不推")
+        if fresh.get("error") == "文件不存在":      # 云端还没有，直接推，没东西可覆盖
+            plain_push(cfg, state, name, f, activity, None)
+            return
+        log(f"⚠ {name} 版本对不上，取云端失败（{fresh.get('error')}），本轮不推")
         return
     cloud = fresh["content"]
     if cloud == f["content"]:                     # 内容本来就一样，只是版本号旧了
@@ -396,53 +399,67 @@ def merge_conflict(cfg, state, name, f, prev_hashes):
         log(f"⇄ {name} 合并后推送又被抢先，下轮重来；磁盘原版留在 {kept.name}")
 
 
-def seed_cloud_versions(cfg, state):
-    """启动时把每份文档的云端版本号取回来。
+def seed_cloud_versions(cfg, state, files):
+    """启动时认领云端版本号，**只认磁盘与云端内容一模一样的那些**。
 
-    没有版本号的推送服务端不校验，等于无条件覆盖——只靠"变化时才记录"的话，
-    一直没动过的文件永远没有版本号，哪天被 AI 改一下就又把她网页上的内容盖掉了。
+    服务端存的 hash 和这里的 sha 是同一个算法，所以一次 docs/list 就能判断。
+    一开始我按 docs/list 无条件认领，结果等于对服务端宣称"磁盘这份就是基于云端
+    最新版改的"——而磁盘明明是旧的，于是重启后第一次推送照样把她网页上的内容盖掉。
+    对不上的一律不认领，留给 reconcile() 去取云端比对。
     """
     data = post("/writing/docs/list", {"token": cfg["token"]})
     if not data.get("ok"):
-        log(f"（取云端版本号失败：{data.get('error')}，本次启动先不校验版本）")
+        log(f"（取云端版本号失败：{data.get('error')}）")
         return
-    n = 0
+    same = diverged = 0
     for d in data.get("docs", []):
-        name, at = d.get("name"), d.get("updatedAt")
-        if name and at and state["cloud_at"].get(name) != at:
-            state["cloud_at"][name] = at
-            n += 1
-    log(f"已对上 {len(data.get('docs', []))} 份文档的云端版本号（更新 {n} 份）")
+        name, at, h = d.get("name"), d.get("updatedAt"), d.get("hash")
+        f = files.get(name)
+        if not (name and at and f):
+            continue
+        if h == f["hash"]:
+            sync_point(state, name, f, at)
+            same += 1
+        else:
+            state["cloud_at"].pop(name, None)   # 内容对不上，版本号一律不认
+            diverged += 1
+    log(f"云端版本号已对齐：{same} 份一致，{diverged} 份两边不一样（推送前会先比对）")
+
+
+def plain_push(cfg, state, name, f, activity, base_at):
+    data = post("/writing/docs/put", {
+        "token": cfg["token"], "name": name, "content": f["content"],
+        "editor": "computer", "readonly": f["readonly"], "date": local_date(),
+        "activeMs": activity["pending_ms"],
+        # 带上"我这份是基于云端哪一版改的"。不带的话服务端不校验，
+        # 磁盘上任何一次改动都会无条件盖掉她在网页上刚写的内容。
+        "baseUpdatedAt": base_at,
+    })
+    if data.get("ok"):
+        activity["pending_ms"] = 0  # 时长只随第一个成功的推送上报一次
+        sync_point(state, name, f, data.get("updatedAt"))
+        log(f"↑ 已推送 {name}（今日新增 {data.get('deltaCjk', '?')} 字）")
+    elif not data.get("conflict"):
+        log(f"推送 {name} 被拒: {data.get('error')}")
+    return data
 
 
 def push_changed(cfg, state, files, activity, prev_hashes=None):
     for name, f in files.items():
         if state["synced_hashes"].get(name) == f["hash"]:
             state["note_counts"].setdefault(name, f["notes"])  # 首轮建立基准
-            if name not in state["cloud_at"]:
-                continue
-            if read_base(name) is None:
+            if name in state["cloud_at"] and read_base(name) is None:
                 write_base(name, f["content"])
             continue
         if not guard_note_loss(cfg, state, name, f, prev_hashes):
             continue
-        data = post("/writing/docs/put", {
-            "token": cfg["token"], "name": name, "content": f["content"],
-            "editor": "computer", "readonly": f["readonly"], "date": local_date(),
-            "activeMs": activity["pending_ms"],
-            # 带上"我这份是基于云端哪一版改的"。不带的话服务端不校验，
-            # 磁盘上任何一次改动都会无条件盖掉她在网页上刚写的内容。
-            "baseUpdatedAt": state["cloud_at"].get(name),
-        })
-        if data.get("conflict"):
-            merge_conflict(cfg, state, name, f, prev_hashes)
+        base_at = state["cloud_at"].get(name)
+        if base_at is None:
+            # 不知道自己基于云端哪一版 → 绝不裸推，先取云端比对
+            reconcile(cfg, state, name, f, activity, prev_hashes)
             continue
-        if data.get("ok"):
-            activity["pending_ms"] = 0  # 时长只随第一个成功的推送上报一次
-            sync_point(state, name, f, data.get("updatedAt"))
-            log(f"↑ 已推送 {name}（今日新增 {data.get('deltaCjk', '?')} 字）")
-        else:
-            log(f"推送 {name} 被拒: {data.get('error')}")
+        if plain_push(cfg, state, name, f, activity, base_at).get("conflict"):
+            reconcile(cfg, state, name, f, activity, prev_hashes)
     save_state(state)
 
 
@@ -507,18 +524,19 @@ def main():
     once = "--once" in sys.argv
     dirs = normalize_dirs(cfg)
     log("开始同步 " + "、".join(f"{p}" + (f"→《{b}》" if b else "") for p, b in dirs))
-    try:
-        seed_cloud_versions(cfg, state)
-    except (urllib.error.URLError, OSError, json.JSONDecodeError) as e:
-        log(f"（取云端版本号失败：{e}，本次启动先不校验版本）")
+
     last_pull = 0.0
     warned = False
+    seeded = False
     prev_hashes = None
     activity = {"last_ts": 0.0, "pending_ms": 0}
     while True:
         try:
             files = scan(dirs)
             warned = False
+            if not seeded:
+                seed_cloud_versions(cfg, state, files)   # 要等第一次扫描拿到磁盘内容才能比对
+                seeded = True
             cur_hashes = {n: f["hash"] for n, f in files.items()}
             track_activity(activity, prev_hashes is not None and cur_hashes != prev_hashes)
             prev_hashes = cur_hashes

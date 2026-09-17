@@ -260,10 +260,69 @@ class TestPushSendsBaseVersion(unittest.TestCase):
         self.assertEqual(put["editor"], "computer")
         self.assertEqual(state["cloud_at"]["第01集.md"], 1800)
 
-    def test_first_push_without_known_version_sends_none(self):
-        self.run_push({}, {"ok": True, "updatedAt": 1800})
-        put = [p for p in self.sent if p[0] == "/writing/docs/put"][0][1]
-        self.assertIsNone(put["baseUpdatedAt"])
+    def test_unknown_version_never_pushes_blindly(self):
+        """不知道基于云端哪一版时，必须先取云端比对，绝不能直接推。
+
+        这一条是 2026-09-17 自检时抓出来的：当时启动会按 docs/list 无条件认领
+        版本号，等于对服务端宣称"磁盘这份基于云端最新版"，于是重启后第一次推送
+        照样把她网页上刚写的内容盖掉。
+        """
+        self.run_push({}, {"ok": True, "content": "云端内容\n", "updatedAt": 1800})
+        paths = [p for p, _ in self.sent]
+        self.assertEqual(paths[0], "/writing/docs/get")   # 先取云端
+        for p, payload in self.sent:
+            if p == "/writing/docs/put":
+                self.assertEqual(payload["baseUpdatedAt"], 1800)   # 推送必定带版本号
+
+class TestSeedCloudVersions(unittest.TestCase):
+    """启动时只认领"磁盘与云端内容一模一样"的版本号。
+
+    服务端 content_hash 与这里的 sha 是同一个算法，所以一次 docs/list 就能判断。
+    认领错了后果很重：等于对服务端宣称"磁盘这份基于云端最新版"，
+    下一次推送就会把她在网页上刚写的内容盖掉。
+    """
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.dir.name)
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def seed(self, docs, disk_text, prior=None):
+        import watcher_client as wc
+        path = self.root / "a.md"
+        path.write_text(disk_text, encoding="utf-8")
+        f = {"path": path, "content": disk_text, "hash": wc.sha(disk_text),
+             "readonly": False, "notes": 0}
+        state = {"synced_hashes": {}, "since": 0, "note_counts": {},
+                 "cloud_at": dict(prior or {})}
+        orig = (wc.post, wc.BASE_DIR)
+        wc.post = lambda p, d: {"ok": True, "docs": docs}
+        wc.BASE_DIR = self.root / "b"
+        try:
+            wc.seed_cloud_versions({"token": "T"}, state, {"a.md": f})
+        finally:
+            wc.post, wc.BASE_DIR = orig
+        return state
+
+    def test_claims_version_when_content_matches(self):
+        import watcher_client as wc
+        text = "一样的内容\n"
+        state = self.seed([{"name": "a.md", "updatedAt": 1800, "hash": wc.sha(text)}], text)
+        self.assertEqual(state["cloud_at"]["a.md"], 1800)
+
+    def test_refuses_version_when_content_differs(self):
+        state = self.seed([{"name": "a.md", "updatedAt": 1800, "hash": "别的内容的hash"}],
+                          "磁盘上的旧内容\n")
+        self.assertNotIn("a.md", state["cloud_at"])
+
+    def test_drops_stale_claim_when_content_differs(self):
+        """之前认领过、现在内容对不上了 → 撤销认领，交给 reconcile。"""
+        state = self.seed([{"name": "a.md", "updatedAt": 1800, "hash": "对不上"}],
+                          "磁盘内容\n", prior={"a.md": 1700})
+        self.assertNotIn("a.md", state["cloud_at"])
+
 
 class TestConflictMerges(unittest.TestCase):
     """版本冲突的完整走法：取云端 → 三方合并 → 写回磁盘 → 带新版本号重推。
