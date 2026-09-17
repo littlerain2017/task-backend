@@ -47,6 +47,24 @@ grep -n "\.remove()\|editor\.innerHTML\|querySelectorAll\|node\.textContent =" w
 
 钩子管不到 Bash 里的 `>` / `cp` / `mv`——别用那些去改书稿。
 
+## 写入冲突：三方合并，她那边永远不丢
+
+`docs/put` 带 `baseUpdatedAt`，版本过期就返回 `conflict`。触发条件很常见：她在网页上写的
+同时，电脑上那份被改了（AI 改稿，或 watcher 把磁盘版推了上去）。
+
+2026-09-17 之前这里只抢救**批注**（`rescueNotesOnConflict`）：拿云端那份当底稿，把她的批注
+插回去，其余一律丢弃，提示还写着"已保住你的 N 条批注"，看着像成功。她报的
+**"划线闪退"就是这个**——删除线是正文里的 `~~` 标记，不是批注，一合并就没了。备份目录里
+第二章/第06集/第08集都留着"删除线数掉到 0、批注数不变"的痕迹。
+
+现在走 `merge3(base, mine, theirs)`（`MERGE3_START`…`MERGE3_END` 之间，纯函数）：
+以她上次成功保存的 `current.baseContent` 为共同祖先做**行级三方合并**，按改动块对齐，
+两边改不同地方时都保留。同一块两边都改了才算冲突，冲突处**保留她这边**，电脑那版
+`backupConflict(.., "电脑")` 另存，控制台 `restoreConflictBackup(0)` 可取回，提示用 err 色。
+
+**改这段一定要跑 `node test_merge3.js`**（13 个测试，含 300 轮随机：她新写的行一行都不能丢）。
+测试直接从 HTML 里抽函数源码，不存在两份代码各改各的。
+
 ## 现有的两道护栏（别拆）
 
 1. **类名分家**：`.note` 是共同基类（`isNote()` 认它），`.friend-note` 朋友留言，`.my-note` 作者批注。

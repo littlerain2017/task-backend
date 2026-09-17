@@ -2629,57 +2629,147 @@ editor.addEventListener("input", (e) => {
   saveTimer = setTimeout(save, SAVE_DEBOUNCE_MS);
 });
 
-/* ===== 写入冲突：先抢救批注，抢救不了再备份 =====
-   冲突的典型场景是「电脑上改了正文，网页上加了批注」——两边动的根本不是
-   同一处。批注是独立的整行，锚点是它上面那行正文，所以能按锚点合并回去。
-   以前这里直接 openDoc 重载，屏幕上刚写的批注就这么没了，只留一行会被
-   下一次 setSync 覆盖的提示。 */
-function mergeNotes(mine, theirs) {
-  const myLines = mine.split("\n");
-  const theirLines = theirs.split("\n");
-  const theirNotes = new Set(theirLines.filter((l) => NOTE_RE.test(l)).map((l) => l.trim()));
-  const pending = [];
-  let anchor = null;
-  myLines.forEach((l) => {
-    if (NOTE_RE.test(l)) {
-      if (!theirNotes.has(l.trim())) pending.push({ anchor, note: l });
-    } else if (l.trim()) {
-      anchor = l;                        // 锚点＝批注上面最近的一行正文
+/* ===== 写入冲突：行级三方合并 =====
+   冲突场景：她在网页上写，电脑上那份同时被改（AI 改稿、或 watcher 把磁盘版
+   推了上去），于是她这次保存的 baseUpdatedAt 已经过期。
+
+   这里以前叫 rescueNotesOnConflict：拿云端那份当底稿，只把她的**批注**插回去。
+   后果是她在这段时间里做的其它改动——删除线、刚敲的句子——全部无声消失，
+   提示还写着"已保住你的 N 条批注"，看着像成功。2026-09-17 查明她说的
+   "划线闪退"就是这么来的：删除线写在正文里（~~ 标记），不属于批注，
+   一合并就没了。
+
+   现在改成真正的三方合并：以她上次成功保存的那份为共同祖先，两边的改动都留下。
+   同一处两边都改了（真冲突）时保留**她这边**——编辑器里的东西永远不丢，
+   电脑那版另存进备份，控制台 restoreConflictBackup(0) 可取回。 */
+
+/* MERGE3_START —— 到 MERGE3_END 之间是纯函数，test_merge3.js 直接抽出来跑 */
+/** base 与 other 的最长公共子序列，返回配对的行号 [[baseIdx, otherIdx], ...]。 */
+function lcsPairs(a, b) {
+  const n = a.length, m = b.length;
+  const w = m + 1;
+  const dp = new Int32Array((n + 1) * w);
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i * w + j] = a[i] === b[j]
+        ? dp[(i + 1) * w + j + 1] + 1
+        : Math.max(dp[(i + 1) * w + j], dp[i * w + j + 1]);
     }
-  });
-  if (!pending.length) return { text: theirs, merged: 0, orphans: 0 };
-  const out = theirLines.slice();
-  let merged = 0;
-  const orphans = [];
-  pending.forEach(({ anchor: a, note }) => {
-    const idx = a === null ? -1 : out.indexOf(a);
-    if (idx >= 0) { out.splice(idx + 1, 0, "", note); merged++; }
-    else orphans.push(note);             // 锚点那段正文在电脑上被改过，找不回原位
-  });
-  if (orphans.length) out.push("", "<!-- 以下批注的原段落已在电脑上改动，暂放文末 -->", ...orphans);
-  return { text: out.join("\n"), merged, orphans: orphans.length };
+  }
+  const pairs = [];
+  let i = 0, j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) { pairs.push([i, j]); i++; j++; }
+    else if (dp[(i + 1) * w + j] >= dp[i * w + j + 1]) i++;
+    else j++;
+  }
+  return pairs;
 }
 
-function backupConflict(content) {
+function sameLines(a, b) {
+  return a.length === b.length && a.every((l, i) => l === b[i]);
+}
+
+/** 一侧相对 base 的改动块：base 的 [bStart, bEnd) 这段被 lines 取代。
+    纯插入时 bStart === bEnd。 */
+function changeBlocks(b, o, pairs) {
+  const out = [];
+  let bi = 0, oi = 0;
+  for (const [bk, ok] of pairs) {
+    if (bk > bi || ok > oi) out.push({ bStart: bi, bEnd: bk, lines: o.slice(oi, ok) });
+    bi = bk + 1; oi = ok + 1;
+  }
+  if (bi < b.length || oi < o.length) {
+    out.push({ bStart: bi, bEnd: b.length, lines: o.slice(oi) });
+  }
+  return out;
+}
+
+/** 把某一侧的改动贴回 base 的 [lo, hi) 区间，还原出这一侧该区间的样子。 */
+function applyBlocks(b, blocks, lo, hi) {
+  const out = [];
+  let p = lo;
+  for (const g of blocks) {
+    for (let x = p; x < g.bStart; x++) out.push(b[x]);
+    for (const l of g.lines) out.push(l);
+    p = g.bEnd;
+  }
+  for (let x = p; x < hi; x++) out.push(b[x]);
+  return out;
+}
+
+/** 行级三方合并。返回 {text, conflicts}；conflicts 是两边改了同一处的块数。
+
+    按**改动块**合并，不是按"三份里都在的行"当同步点——后者会把两边改在相邻
+    行的情形误判成冲突（她改第二段、电脑改第三段，中间没有同步点可切）。 */
+function merge3(base, mine, theirs) {
+  const b = base.split("\n"), m = mine.split("\n"), t = theirs.split("\n");
+  const mine_ = changeBlocks(b, m, lcsPairs(b, m)).map((g) => (g.side = "m", g));
+  const theirs_ = changeBlocks(b, t, lcsPairs(b, t)).map((g) => (g.side = "t", g));
+  const all = mine_.concat(theirs_).sort((x, y) => x.bStart - y.bStart || x.bEnd - y.bEnd);
+
+  const out = [];
+  const push = (seg) => { for (const l of seg) out.push(l); };
+  let bi = 0, k = 0, conflicts = 0;
+
+  while (k < all.length) {
+    let lo = all[k].bStart, hi = all[k].bEnd;
+    const group = [all[k]];
+    let k2 = k + 1;
+    while (k2 < all.length && all[k2].bStart < hi) {   // 与本组在 base 上有重叠
+      hi = Math.max(hi, all[k2].bEnd);
+      group.push(all[k2]);
+      k2++;
+    }
+    push(b.slice(bi, lo));                             // 这一段三边一致
+    const mg = group.filter((g) => g.side === "m");
+    const tg = group.filter((g) => g.side === "t");
+    if (!tg.length) push(applyBlocks(b, mg, lo, hi));        // 只有网页改了
+    else if (!mg.length) push(applyBlocks(b, tg, lo, hi));   // 只有电脑改了
+    else {
+      const mr = applyBlocks(b, mg, lo, hi), tr = applyBlocks(b, tg, lo, hi);
+      if (sameLines(mr, tr)) push(mr);                 // 两边改成了一样的
+      else if (lo === hi) { push(mr); push(tr); }      // 同一处各自插入：都留着
+      else { push(mr); conflicts++; }                  // 真冲突：保她这边
+    }
+    bi = hi;
+    k = k2;
+  }
+  push(b.slice(bi));
+  return { text: out.join("\n"), conflicts };
+}
+/* MERGE3_END */
+
+function backupConflict(content, side) {
   try {
     const list = JSON.parse(localStorage.getItem("writing_conflict_backups") || "[]");
-    list.unshift({ at: Date.now(), name: (current && current.name) || "", content });
+    list.unshift({ at: Date.now(), name: (current && current.name) || "",
+                   side: side || "网页", content });
     localStorage.setItem("writing_conflict_backups", JSON.stringify(list.slice(0, 5)));
   } catch (e) { /* 存储满了就算了，至少别挡住保存流程 */ }
 }
 // 控制台里捞回来：restoreConflictBackup() 看列表，restoreConflictBackup(0) 取最近一份
 window.restoreConflictBackup = function (i) {
   const list = JSON.parse(localStorage.getItem("writing_conflict_backups") || "[]");
-  if (i === undefined) return list.map((b, n) => `${n}: ${new Date(b.at).toLocaleString()} · ${b.name}`);
+  if (i === undefined) return list.map((b, n) =>
+    `${n}: ${new Date(b.at).toLocaleString()} · ${b.name} · ${b.side || "网页"}版`);
   return list[i] ? list[i].content : null;
 };
 
-async function rescueNotesOnConflict(mine) {
+async function mergeOnConflict(mine) {
   try {
     const fresh = await api("/writing/docs/get", { name: current.name });
     if (!fresh.ok) return false;
-    const { text, merged, orphans } = mergeNotes(mine, fresh.content);
-    if (!merged && !orphans) return false;      // 没有只在这边存在的批注，走原路径
+    if (fresh.content === mine) {              // 内容本来就一样，只是版本号过期
+      dirty = false;
+      current.updatedAt = fresh.updatedAt;
+      current.baseContent = mine;
+      setSync("已同步", "ok");
+      return true;
+    }
+    // 没有共同祖先就拿云端那份顶上——此时 merge3 会整份保留她这边，不会丢东西
+    const { text, conflicts } = merge3(current.baseContent || fresh.content, mine, fresh.content);
+    if (conflicts) backupConflict(fresh.content, "电脑");   // 被她这边盖掉的那版，留个底
     const put = await api("/writing/docs/put", {
       name: current.name, content: text, editor: "web",
       date: localDate(), baseUpdatedAt: fresh.updatedAt, activeMs: 0,
@@ -2695,9 +2785,9 @@ async function rescueNotesOnConflict(mine) {
     renderHighlights();
     renderCounts();
     loadComments(current.name);
-    setSync(orphans
-      ? `电脑上有更新，已合并你的 ${merged + orphans} 条批注（${orphans} 条原段落已改，放在文末）`
-      : `电脑上有更新，已保住你的 ${merged} 条批注`, "ok");
+    setSync(conflicts
+      ? `电脑上有更新，${conflicts} 处两边都改了，已保留你这边（电脑版在控制台 restoreConflictBackup(0)）`
+      : "电脑上有更新，已和你这边合并", conflicts ? "err" : "ok");
     return true;
   } catch (e) {
     return false;
@@ -2737,8 +2827,8 @@ async function save() {
       const t = new Date();
       setSync(`已同步 ${pad2(t.getHours())}:${pad2(t.getMinutes())}`, "ok");
     } else if (data.conflict) {
-      backupConflict(content);                 // 先留底，再谈抢救
-      if (await rescueNotesOnConflict(content)) return;
+      backupConflict(content);                 // 先留底，再谈合并
+      if (await mergeOnConflict(content)) return;
       setSync("电脑上有更新的版本，已重新加载（你这份已备份，控制台 restoreConflictBackup(0) 可取回）", "err");
       dirty = false;
       await openDoc(current.name);
