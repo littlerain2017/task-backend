@@ -14,6 +14,15 @@ def strip_notes(text):
     return NOTE_LINE_RE.sub("", text)
 
 
+# 连行尾换行一起删。统计不在乎多一个空行，分享页在乎——
+# 剧本排版里空行是有意义的停顿，留下来会打乱整章的行律。
+NOTE_WHOLE_LINE_RE = re.compile(r"^[ \t]*<!--\s*批注\s.*?-->[ \t]*\n?", re.MULTILINE)
+
+
+def drop_note_lines(text):
+    return NOTE_WHOLE_LINE_RE.sub("", text)
+
+
 def count_text(text):
     """返回 (中文字符数, 英文单词数)，与各客户端口径一致。批注不计入。"""
     t = strip_notes(text)

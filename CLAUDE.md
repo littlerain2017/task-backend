@@ -55,6 +55,17 @@ grep -n "\.remove()\|editor\.innerHTML\|querySelectorAll\|node\.textContent =" w
 2. **保存前完整性检查**：`save()` 里比对批注数，比上次落盘时少、又抵不掉 `noteDeletes`
    （× 按钮与清空失焦各记一次）就中止保存。它拦的是同类**还没发生**的 bug。
 
+## 分享页的排版必须跟写作页一致
+
+`read_page.html` 的 `.script` / `.para` 抄的是 `write_page.html` 里 `#editor` / `.line` 那套剧本
+排版（等宽 Courier Prime、15px、行距 1.6、74ch 字幅、8ch 左右留白、段间距 0、不首行缩进）。
+**改了一边必须改另一边**，数值源头是 `write_page.html` 的 `PREFS_TYPO`。
+唯一有意不同的一处：`@media (max-width: 720px)` 下分享页把 `--side` 收到 `2ch`——
+等宽字 8ch 留白在手机上会把正文压成二十来字一行。读者多半在手机上看。
+
+**分享出去的正文必须剥掉作者批注**，在服务端剥（`drop_note_lines`），不是前端。
+批注是她的私人修订备忘（"这段重写"），前端剥的话原文照样过了网线。
+
 ## 编辑器里三种"标注"，别搞混
 
 | | 类名 | 谁写的 | 存在哪 | 计字数 |

@@ -1,7 +1,32 @@
 """writing_logic 单元测试。"""
 import unittest
 
-from writing_logic import aggregate_file_docs, build_daily, cjk_to_int, count_text, doc_sort_key
+from writing_logic import (aggregate_file_docs, build_daily, cjk_to_int, count_text,
+                           doc_sort_key, drop_note_lines)
+
+
+class TestDropNoteLines(unittest.TestCase):
+    """分享页用：批注是作者私人备忘，整行删掉，且不能留下空行打乱剧本行律。"""
+
+    def test_removes_whole_line_without_leaving_blank(self):
+        text = "第一段\n<!-- 批注 2026-09-10 14:32 | 这段重写 -->\n第二段\n"
+        self.assertEqual(drop_note_lines(text), "第一段\n第二段\n")
+
+    def test_removes_done_marked_note(self):
+        text = "正文\n<!-- 批注 ✓ 2026-09-11 09:00 | 已改 -->\n尾\n"
+        self.assertEqual(drop_note_lines(text), "正文\n尾\n")
+
+    def test_note_on_last_line(self):
+        self.assertEqual(drop_note_lines("正文\n<!-- 批注 2026-09-10 14:32 | x -->"), "正文\n")
+
+    def test_keeps_author_blank_lines(self):
+        """空行是剧本排版里的停顿，只删批注那一行。"""
+        text = "第一段\n\n<!-- 批注 2026-09-10 14:32 | x -->\n\n第二段"
+        self.assertEqual(drop_note_lines(text), "第一段\n\n\n第二段")
+
+    def test_leaves_ordinary_html_comments(self):
+        text = "正文\n<!-- 普通注释 -->\n尾"
+        self.assertEqual(drop_note_lines(text), text)
 
 
 class TestCountText(unittest.TestCase):

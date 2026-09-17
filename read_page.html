@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>阅读 · WRITING MACHINE</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600&family=Cormorant+Garamond:wght@500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600&family=Cormorant+Garamond:wght@500;600&family=Courier+Prime:wght@400;700&display=swap" rel="stylesheet">
 <style>
   :root {
     --bg: #171512;
@@ -87,19 +87,44 @@
 
   /* 阅读 */
   .read-title {
+    /* 章节名属于界面，不属于稿子——跟写作页顶栏的章节名一样用衬线，别被正文的等宽带跑 */
+    font-family: "Noto Serif SC", "Songti SC", Georgia, serif;
     font-size: clamp(22px, 4vw, 30px); font-weight: 600;
     color: var(--ink); margin-bottom: 5vh; letter-spacing: 0.04em;
   }
-  .para {
-    position: relative; font-size: 18px; line-height: 2.05; letter-spacing: 0.03em;
-    color: var(--ink); margin: 0 0 1.5em; text-indent: 2em;
+  /* 正文排版与写作页 #editor 完全一致：等宽拉丁、固定行律、稿纸式字幅。
+     两处的数值必须同步改（write_page 的 PREFS_TYPO 默认值）。 */
+  .script {
+    --font-size: 15px;
+    --leading: 1.6;
+    --side: 8ch;
+    --sc-lh: calc(var(--font-size) * var(--leading));
+    width: min(calc(74 * 1ch), 100%);
+    margin: 0 auto;
+    font-family: "Courier Prime", "Courier New", Courier, monospace;
+    font-size: var(--font-size);
+    line-height: var(--sc-lh);
+    letter-spacing: 0;
   }
-  .para.h1 { font-size: 1.35em; font-weight: 600; text-indent: 0; margin-bottom: 0.6em; }
-  .para.h2 { font-size: 1.12em; font-weight: 500; color: var(--ink-soft); text-indent: 0; margin-bottom: 1.2em; }
-  .para.rule { text-indent: 0; text-align: center; color: #55503f; letter-spacing: 0.5em; margin: 2em 0; }
+  .para {
+    position: relative; color: var(--ink);
+    margin: 0; text-indent: 0;
+    padding-left: var(--side); padding-right: var(--side);
+    word-break: break-word;
+  }
+  .para.h1 { font-size: 1.35em; font-weight: 600; letter-spacing: 0.02em; margin-bottom: 0.6em; }
+  .para.h2 { font-size: 1.12em; font-weight: 500; color: var(--ink-soft); margin-bottom: 1.2em; }
+  .para.rule { text-align: center; color: #55503f; letter-spacing: 0.5em; margin: 2.2em 0; }
+  /* 删除线＝她标的"待删"，不是已删，读者也该看见它被划掉了 */
+  .para s {
+    text-decoration: line-through;
+    text-decoration-color: #c96a5c;
+    text-decoration-thickness: 1.5px;
+    color: var(--muted);
+  }
   .para.commentable { cursor: text; }
   .para .add-note {
-    position: absolute; left: -34px; top: 50%; transform: translateY(-50%);
+    position: absolute; left: calc(var(--side) - 30px); top: 50%; transform: translateY(-50%);
     width: 24px; height: 24px; border-radius: 50%;
     border: 1px solid var(--note); color: var(--note); background: var(--bg);
     font-size: 13px; line-height: 22px; text-align: center;
@@ -109,7 +134,9 @@
   @media (max-width: 720px) {
     .para .add-note { position: static; transform: none; opacity: 0.6; display: inline-block;
       margin-left: 8px; vertical-align: middle; width: 20px; height: 20px; line-height: 18px; font-size: 11px; }
-    .para { text-indent: 0; }
+    /* 唯一与写作页不同的一处：手机上收窄稿纸留白。
+       等宽字 8ch 的左右边距在窄屏会把正文压成 20 来字一行，没法读。 */
+    .script { --side: 2ch; }
   }
 
   /* 留言（读者的话，冷蓝色） */
@@ -240,6 +267,7 @@ function renderChapter(name, chap, comments) {
   });
 
   const wrap = document.createElement("div");
+  wrap.className = "script";
   const h = document.createElement("div");
   h.className = "read-title";
   h.textContent = chap.title;
@@ -250,7 +278,7 @@ function renderChapter(name, chap, comments) {
     const p = document.createElement("div");
     p.className = "para " + classify(text);
     if (text === "") { p.innerHTML = "&nbsp;"; wrap.appendChild(p); return; }
-    p.textContent = text;
+    p.innerHTML = renderInline(text);
     if (!p.classList.contains("rule")) {
       p.classList.add("commentable");
       const btn = document.createElement("span");
@@ -334,6 +362,13 @@ async function submitNote(name, paraText, box, text) {
   } catch (e) {
     btn.textContent = "留言"; btn.disabled = false; alert("留言失败：" + e.message);
   }
+}
+
+// 与写作页同一套删除线规则（write_page 的 STRIKE_RE）：~~待删的字~~
+const STRIKE_RE = /~~([^~\n]+)~~/g;
+
+function renderInline(text) {
+  return escapeHtml(text).replace(STRIKE_RE, (_, inner) => `<s>${inner}</s>`);
 }
 
 function escapeHtml(s) {
