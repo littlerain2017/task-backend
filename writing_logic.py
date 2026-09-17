@@ -18,9 +18,19 @@ def strip_notes(text):
 # 剧本排版里空行是有意义的停顿，留下来会打乱整章的行律。
 NOTE_WHOLE_LINE_RE = re.compile(r"^[ \t]*<!--\s*批注\s.*?-->[ \t]*\n?", re.MULTILINE)
 
+# 批注格式：<!-- 批注 [@某人] [✓] [#线程号] 时间 | 正文 -->（与前端 NOTE_RE 同一套）。
+# 只认「批注」后面紧跟 ✓ 的——AI 写的批注 @claude 排在 ✓ 前面，因此自动落选。
+AUTHOR_DONE_NOTE_RE = re.compile(r"^[ \t]*<!--\s*批注\s*✓")
 
-def drop_note_lines(text):
-    return NOTE_WHOLE_LINE_RE.sub("", text)
+
+def keep_shared_notes(text):
+    """分享页用：只留作者本人打了 ✓ 的批注，其余整行删掉。
+
+    没打 ✓ 的是她还没改的待办，@claude 的是 AI 写的，两样都不该给读者看；
+    而且必须在服务端删，前端删的话原文照样过了网线。
+    """
+    return NOTE_WHOLE_LINE_RE.sub(
+        lambda m: m.group(0) if AUTHOR_DONE_NOTE_RE.match(m.group(0)) else "", text)
 
 
 def count_text(text):

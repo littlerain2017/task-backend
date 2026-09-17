@@ -158,7 +158,7 @@ import base64
 import hashlib
 import secrets
 from typing import Optional
-from writing_logic import aggregate_file_docs, build_daily, count_text, doc_sort_key, drop_note_lines
+from writing_logic import aggregate_file_docs, build_daily, count_text, doc_sort_key, keep_shared_notes
 
 WRITING_APPID = os.environ.get("WRITING_APPID", "wxff2f10ce15321b4a")
 WRITING_APPSECRET = os.environ.get("WRITING_APPSECRET", "af1333432c29946412e52b37c805d836")
@@ -611,11 +611,10 @@ async def writing_share_chapter(req: ShareChapterRequest):
         doc = await writing_query_doc("docs", f'{share["uid"]}:{req.name}')
         if doc is None:
             return {"ok": False, "error": "该文件已被删除"}
-        # 批注是作者的私人修订备忘（"这段重写"），绝不能出现在分享给别人的页面上。
-        # 必须在服务端剥掉——前端剥的话原文仍然过了网线，谁看一眼请求就都看见了。
+        # 只把她打了 ✓ 的批注发出去；没改完的待办和 AI 写的批注留在服务端。
         return {"ok": True,
                 "title": req.name.split("/")[-1].rsplit(".", 1)[0],
-                "content": drop_note_lines(content_decode(doc.get("contentB64", "")))}
+                "content": keep_shared_notes(content_decode(doc.get("contentB64", "")))}
     except RuntimeError as e:
         print(f"[writing] share/chapter 失败: {e}")
         return {"ok": False, "error": "服务器内部错误"}

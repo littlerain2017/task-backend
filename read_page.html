@@ -139,6 +139,20 @@
     .script { --side: 2ch; }
   }
 
+  /* 作者批注（只有她打了 ✓ 的会发到这里）：照搬写作页 .note.my-note 那套鎏金卡片。
+     写作页里已处理的批注会整块变灰隐退，那是给她自己看"还剩哪些没改"用的；
+     分享页上本来就只有已处理的，再变灰就只剩一片灰盒子，所以保留金色。 */
+  .note.my-note {
+    margin: 6px 0 1.2em; padding: 8px 12px;
+    border-left: 3px solid var(--gold);
+    background: rgba(211, 178, 92, 0.08);
+    border-radius: 0 8px 8px 0;
+    font-size: 0.82em; line-height: 1.65;
+  }
+  .note.my-note .in-tick { margin-right: 7px; font-size: 0.95em; color: var(--gold); user-select: none; }
+  .note.my-note .in-head { color: var(--gold); font-size: 0.85em; letter-spacing: 0.04em; }
+  .note.my-note .in-text { color: var(--ink-soft); white-space: pre-wrap; margin-top: 3px; }
+
   /* 留言（读者的话，冷蓝色） */
   .note {
     margin: 4px 0 1.8em; padding: 10px 14px;
@@ -275,6 +289,8 @@ function renderChapter(name, chap, comments) {
 
   chap.content.split("\n").forEach((line) => {
     const text = line.trim();
+    const note = NOTE_RE.exec(line);
+    if (note) { wrap.appendChild(buildAuthorNote(note[4], noteDecode(note[5]))); return; }
     const p = document.createElement("div");
     p.className = "para " + classify(text);
     if (text === "") { p.innerHTML = "&nbsp;"; wrap.appendChild(p); return; }
@@ -366,6 +382,23 @@ async function submitNote(name, paraText, box, text) {
 
 // 与写作页同一套删除线规则（write_page 的 STRIKE_RE）：~~待删的字~~
 const STRIKE_RE = /~~([^~\n]+)~~/g;
+
+/* 作者批注，与写作页 NOTE_RE / noteDecode 同一套。服务端只会发来打了 ✓ 的那些，
+   这里仍然按完整格式解析——少一处口径不一致，就少一次"她的批注变成一行乱码"。 */
+const NOTE_RE = /^\s*<!--\s*批注\s*(@\S+)?\s*(✓)?\s*(?:#([0-9a-z]{4,8}))?\s*(.*?)\s*\|\s*([\s\S]*?)\s*-->\s*$/;
+
+function noteDecode(t) {
+  return t.replace(/\\(n|\\|>)/g, (m, c) => (c === "n" ? "\n" : c === "\\" ? "\\" : ">"));
+}
+
+function buildAuthorNote(stamp, text) {
+  const div = document.createElement("div");
+  div.className = "note my-note";
+  div.innerHTML = `<span class="in-tick">✓</span>
+    <span class="in-head">批注 · ${escapeHtml(stamp)}</span>
+    <div class="in-text">${escapeHtml(text)}</div>`;
+  return div;
+}
 
 function renderInline(text) {
   return escapeHtml(text).replace(STRIKE_RE, (_, inner) => `<s>${inner}</s>`);

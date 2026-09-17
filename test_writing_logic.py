@@ -2,31 +2,40 @@
 import unittest
 
 from writing_logic import (aggregate_file_docs, build_daily, cjk_to_int, count_text,
-                           doc_sort_key, drop_note_lines)
+                           doc_sort_key, keep_shared_notes)
 
 
-class TestDropNoteLines(unittest.TestCase):
-    """分享页用：批注是作者私人备忘，整行删掉，且不能留下空行打乱剧本行律。"""
+class TestKeepSharedNotes(unittest.TestCase):
+    """分享页只发作者本人打了 ✓ 的批注：待办和 AI 批注留在服务端。"""
 
-    def test_removes_whole_line_without_leaving_blank(self):
+    def test_keeps_author_done_note(self):
+        text = "正文\n<!-- 批注 ✓ 2026-09-11 09:00 | 已按这个改了 -->\n尾\n"
+        self.assertEqual(keep_shared_notes(text), text)
+
+    def test_drops_undone_note_without_leaving_blank(self):
         text = "第一段\n<!-- 批注 2026-09-10 14:32 | 这段重写 -->\n第二段\n"
-        self.assertEqual(drop_note_lines(text), "第一段\n第二段\n")
+        self.assertEqual(keep_shared_notes(text), "第一段\n第二段\n")
 
-    def test_removes_done_marked_note(self):
-        text = "正文\n<!-- 批注 ✓ 2026-09-11 09:00 | 已改 -->\n尾\n"
-        self.assertEqual(drop_note_lines(text), "正文\n尾\n")
+    def test_drops_ai_note_even_when_done(self):
+        """AI 写的批注 @claude 排在 ✓ 前面，不是她写的，不发给读者。"""
+        text = "正文\n<!-- 批注 @claude ✓ 2026-09-11 09:00 | AI 的意见 -->\n尾\n"
+        self.assertEqual(keep_shared_notes(text), "正文\n尾\n")
 
-    def test_note_on_last_line(self):
-        self.assertEqual(drop_note_lines("正文\n<!-- 批注 2026-09-10 14:32 | x -->"), "正文\n")
+    def test_keeps_done_note_with_thread_id(self):
+        text = "正文\n<!-- 批注 ✓ #a1b2 2026-09-11 09:00 | 回复 -->\n尾\n"
+        self.assertEqual(keep_shared_notes(text), text)
+
+    def test_undone_note_on_last_line(self):
+        self.assertEqual(keep_shared_notes("正文\n<!-- 批注 2026-09-10 14:32 | x -->"), "正文\n")
 
     def test_keeps_author_blank_lines(self):
         """空行是剧本排版里的停顿，只删批注那一行。"""
         text = "第一段\n\n<!-- 批注 2026-09-10 14:32 | x -->\n\n第二段"
-        self.assertEqual(drop_note_lines(text), "第一段\n\n\n第二段")
+        self.assertEqual(keep_shared_notes(text), "第一段\n\n\n第二段")
 
     def test_leaves_ordinary_html_comments(self):
         text = "正文\n<!-- 普通注释 -->\n尾"
-        self.assertEqual(drop_note_lines(text), text)
+        self.assertEqual(keep_shared_notes(text), text)
 
 
 class TestCountText(unittest.TestCase):
