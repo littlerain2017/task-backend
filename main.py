@@ -808,7 +808,11 @@ async def advisor_find_doc(uid: str, prefix: str, starts: str) -> str:
 # 写作系统带我飞是 00_世界观设定.md，营救麦克黄是 _故事大纲.md。只认 00_
 # 会漏掉最后那种。科幻顾问仍走 advisor_find_doc（它硬性要求 00_，那是明确
 # 设计），参考顾问的背景是可选的，放宽了也不会误伤。
+# 一本书的"背景"常常散在几个文件里：世界观一份、剧情结构一份。
+# 只读第一个匹配的，就会出现 THE ROOM 读到 00_worldbuilding 却读不到
+# season1_structure 的情况——而后者才是整本的大纲。所以分两档收集。
 CANON_HINTS = ("大纲", "outline", "世界观", "设定集", "圣经", "bible")
+STRUCT_HINTS = ("结构", "structure", "分集", "节拍", "beat")
 
 
 def _in_book(name: str, prefix: str) -> bool:
@@ -818,18 +822,31 @@ def _in_book(name: str, prefix: str) -> bool:
     return not (not prefix and "/" in name)
 
 
-async def ref_find_canon(uid: str, prefix: str) -> str:
-    """参考顾问的背景：先找书根目录的 00_（与科幻顾问同口径），
-    再按「大纲/世界观」这类字眼找，允许在子目录里。"""
+async def ref_find_canon(uid: str, prefix: str, limit: int = 2) -> list:
+    """这本书的背景文件，按优先级最多取 limit 个：
+    书根目录的 00_（与科幻顾问同口径）→ 名字带世界观/大纲的 → 名字带结构/分集的。
+    一本书的背景常散在几个文件里，只取一个会漏掉真正的剧情大纲。"""
     names = sorted(d.get("name", "") for d in await writing_doc_metas(uid))
+    out = []
+
+    def take(n):
+        if n and n not in out:
+            out.append(n)
+
     for n in names:
-        rel = n[len(prefix):]
-        if _in_book(n, prefix) and "/" not in rel and rel.startswith(CANON_PREFIX):
-            return n
-    for n in names:
-        if _in_book(n, prefix) and any(h in n.rsplit("/", 1)[-1].lower() for h in CANON_HINTS):
-            return n
-    return ""
+        if _in_book(n, prefix) and "/" not in n[len(prefix):] and n[len(prefix):].startswith(CANON_PREFIX):
+            take(n)
+            break
+    # 每档只取一个：同一档里的多个文件往往是同一东西的不同版本
+    # （营救麦克黄有两份大纲），一起喂进去只会让顾问在版本之间打架。
+    for hints in (CANON_HINTS, STRUCT_HINTS):
+        for n in names:
+            if len(out) >= limit:
+                return out[:limit]
+            if _in_book(n, prefix) and any(h in n.rsplit("/", 1)[-1].lower() for h in hints):
+                take(n)
+                break
+    return out[:limit]
 
 
 async def ref_find_taste(uid: str, prefix: str) -> str:
@@ -1110,7 +1127,7 @@ async def scifi_advisor(req: ScifiAdvisorRequest):
 # 这本书有 00_ 设定就一并读进去当背景（顾问才知道整本在做什么主题），没有也照常工作。
 
 REF_TEXT_LIMIT = 12000   # 超出部分截掉：找参考不需要读完整章，且要控住延迟与成本
-REF_CANON_LIMIT = 6000   # 背景只用来定位主题，不需要全文
+REF_CANON_LIMIT = 14000  # 不联网是单次调用，背景给足——整本世界观加剧情大纲
 # 联网是多轮的，每轮都要把全部输入重读一遍，所以开搜索时把背景压薄。
 # 顺带治一个老毛病：canon 越详细，选片越容易被题材带跑。
 REF_CANON_LIMIT_SEARCH = 2500
@@ -1342,18 +1359,27 @@ async def reference_advisor(req: RefAdvisorRequest):
     # 只在「找参考」开搜索：「卡住了」以做法为主，搜索只会把它拉回书单
     use_search = MOONSHOT_REF_SEARCH and mode == "find"
 
-    # 这本书的 00_ 设定当背景。读不到就空着——参考顾问不像科幻顾问那样依赖它。
+    # 这本书的背景（世界观 + 剧情大纲）。读不到就空着——参考顾问不像科幻顾问那样依赖它。
+    # 联网要跑三段、每段重读一遍，所以额度压小；不联网是单次调用，可以给足。
     canon_block, canon_name = "", ""
     try:
-        canon_name = await ref_find_canon(uid, advisor_book_prefix(name))
-        limit = REF_CANON_LIMIT_SEARCH if use_search else REF_CANON_LIMIT
-        canon = (await advisor_doc_text(uid, canon_name)).strip()[:limit]
-        if canon:
-            canon_block = REF_CANON_BLOCK.format(canon_name=canon_name, canon=canon)
-        else:
-            canon_name = ""
+        budget = REF_CANON_LIMIT_SEARCH if use_search else REF_CANON_LIMIT
+        docs = await ref_find_canon(uid, advisor_book_prefix(name))
+        picked, texts = [], []
+        for dn in docs:
+            if budget <= 0:
+                break
+            body = (await advisor_doc_text(uid, dn)).strip()[:budget]
+            if body:
+                picked.append(dn)
+                texts.append(f"—— {dn.rsplit('/', 1)[-1]} ——\n{body}")
+                budget -= len(body)
+        if texts:
+            canon_name = " + ".join(d.rsplit("/", 1)[-1] for d in picked)
+            canon_block = REF_CANON_BLOCK.format(canon_name=canon_name,
+                                                 canon="\n\n".join(texts))
     except (RuntimeError, ValueError, OSError) as e:
-        print(f"[ref] 读取《{book}》设定失败，按无背景继续: {e}")
+        print(f"[ref] 读取《{book}》背景失败，按无背景继续: {e}")
         canon_name = ""
 
     # 作者自己的参考库，读不到就空着
