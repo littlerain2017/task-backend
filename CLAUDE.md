@@ -34,6 +34,19 @@ grep -n "\.remove()\|editor\.innerHTML\|querySelectorAll\|node\.textContent =" w
 只验证"数据在磁盘/在云端/正则能匹配"是**不够的**——那三项只覆盖数据层，
 渲染链末端还有别的东西在动 DOM。
 
+## 作者的编辑不可被覆盖（两道机械护栏）
+
+她在 `/write` 上的改动会经 watcher 落到 `~/Documents/Books/`，因此**任何程序整文件覆盖
+那里的稿子，都等于删掉她刚写的东西**。2026-09-17 装了两道拦截：
+
+1. **写前拦截**：`~/.claude/settings.json` 的 PreToolUse 钩子跑 `~/.claude/hooks/guard-books-write.py`，
+   对 `Books/` 下**已存在**文件的 `Write` 一律 deny（新建放行）。只能 `Edit`，且动手前先 Read。
+2. **推前拦截**：`watcher_client.guard_note_loss()`。磁盘版本的批注数比上次同步点少，就不推，
+   把磁盘那份存进 `~/.writing-watcher-quarantine/`，再用云端版本恢复文件。
+   基准存在 state 的 `note_counts`；她在网页删批注会经写回把基准调低，所以不会误伤。
+
+钩子管不到 Bash 里的 `>` / `cp` / `mv`——别用那些去改书稿。
+
 ## 现有的两道护栏（别拆）
 
 1. **类名分家**：`.note` 是共同基类（`isNote()` 认它），`.friend-note` 朋友留言，`.my-note` 作者批注。
