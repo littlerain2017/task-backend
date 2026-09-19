@@ -379,14 +379,19 @@ async def writing_docs_put(req: DocsPutRequest):
         existing = await writing_query_doc("docs", doc_id)
         if existing and existing.get("readonly") and req.editor == "web":
             return {"ok": False, "error": "该文件为只读（Word 文档请在电脑上编辑）"}
-        # 两边都校验版本。这里以前只校验 web、"电脑保存以磁盘为准"，于是 watcher
-        # 可以无条件覆盖云端——她在网页上刚写的东西，被磁盘上那份旧稿一推就没了，
-        # 浏览器下一轮 refresh 拉回旧版，屏幕上的字凭空消失。2026-09-17 查明这是
-        # "批注和划线老是闪退"的总根源，前端的三方合并只是下游补救。
-        if (req.baseUpdatedAt is not None and existing
-                and existing.get("updatedAt") != req.baseUpdatedAt):
+        # 这是一份多处同时编辑的文档（网页、电脑、AI 改稿），所以**改已存在的文件
+        # 必须声明自己基于哪一版**。新建文件没有可覆盖的东西，不要求。
+        #
+        # 两条历史教训都在这里：①这里以前只校验 web、"电脑保存以磁盘为准"，
+        # 于是 watcher 可以无条件覆盖云端——她在网页上刚写的东西被磁盘上那份旧稿
+        # 一推就没了，浏览器下一轮 refresh 拉回旧版，屏幕上的字凭空消失，这是
+        # "批注和划线老是闪退"的总根源；②后来虽然两边都校验了，却仍然放行
+        # "不带版本号"的写入，等于给任何一个漏传的客户端（临时脚本、老版 watcher）
+        # 留了一扇后门。现在一律拒，客户端收到 conflict 后去取最新版再合并。
+        if existing and req.baseUpdatedAt != existing.get("updatedAt"):
             where = "电脑" if req.editor == "web" else "网页"
-            return {"ok": False, "conflict": True, "error": f"文件已在{where}上更新",
+            reason = "未声明基于哪一版" if req.baseUpdatedAt is None else f"文件已在{where}上更新"
+            return {"ok": False, "conflict": True, "error": reason,
                     "updatedAt": existing.get("updatedAt", 0)}
 
         now_ms = int(time_mod.time() * 1000)
