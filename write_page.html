@@ -1557,6 +1557,9 @@ function classify(text) {
 }
 
 function setEditorContent(text) {
+  // 整份重建：先把此前用户造成的摘除结算掉，重建本身产生的记录一律丢弃——
+  // 丢弃是故意的，渲染 bug 摘掉批注时才会被护栏发现。
+  drainNoteRemovals();
   editor.innerHTML = "";
   const frag = document.createDocumentFragment();
   text.split("\n").forEach((lineText) => {
@@ -1575,6 +1578,7 @@ function setEditorContent(text) {
     frag.appendChild(div);
   }
   editor.appendChild(frag);
+  noteObserver.takeRecords();     // 丢弃重建自身的记录
 }
 
 /* ===== 批注的文件格式 =====
@@ -1690,9 +1694,43 @@ editor.addEventListener("blur", () =>
    正文的唯一真源是 DOM（getEditorContent 从 DOM 序列化）。这意味着任何让
    节点从 DOM 消失的显示 bug，都会在下一次保存时变成**数据删除**——这个系统
    里没有纯粹的显示 bug。2026-09-10 就是这样丢了三条批注。
-   这道闸不针对某一个 bug，它拦的是同一类还没发生的 bug：
-   保存前数一遍批注，比上次落盘时少了、又抵不掉用户主动删除的次数，就中止。 */
+
+   2026-09-17：这道闸原本「批注变少就中止保存」，而「用户主动删除」只认三条路
+   （两个 × 按钮、批注清空失焦）。她选中一段含批注的正文直接删掉时一条都不算，
+   于是保存被中止——**删除永远存不进去，刷新后又回来**，dirty 一直为真、页面
+   不再同步，就是她说的「删不掉、会卡」。
+
+   现在改成：① 用 MutationObserver 记下所有从编辑器里被摘走的 .my-note，
+   保存前用 takeRecords() 同步结算，她怎么删都算数；② 仍然对不上的时候**不再
+   中止保存**，改为先把掉批注之前那份留底再照常保存——挡住她的编辑本身就是一种
+   数据丢失，而留底的批注随时能取回。 */
 let noteDeletes = 0;   // 用户主动删掉的批注数，save 时抵扣，成功后清零
+
+const noteObserver = new MutationObserver(() => {});   // 只用 takeRecords 同步取
+
+function countRemovedNotes(records) {
+  let n = 0;
+  for (const r of records) {
+    r.removedNodes.forEach((node) => {
+      if (node.nodeType === Node.ELEMENT_NODE && node.classList.contains("my-note")) n++;
+    });
+  }
+  return n;
+}
+
+/** 同步结算「用户摘掉了几条批注」。必须同步——× 按钮删完当场就调 save()，
+    等 MutationObserver 的异步回调就来不及，会被误判成掉批注。 */
+function dropNoteByUser(div) {
+  div.remove();
+  noteObserver.takeRecords();   // 丢弃这条记录，免得 input 那边重复计数
+  noteDeletes++;
+}
+
+function drainNoteRemovals() {
+  noteDeletes += countRemovedNotes(noteObserver.takeRecords());
+}
+
+noteObserver.observe(editor, { childList: true });
 
 function countNotes(text) {
   return text.split("\n").filter((l) => NOTE_RE.test(l)).length;
@@ -2130,8 +2168,7 @@ function buildMyNote(stamp, text, done, who, tid) {
   if (ai) {
     txt.contentEditable = "false";
     div.querySelector(".in-del").onclick = () => {
-      noteDeletes++;
-      div.remove();
+      dropNoteByUser(div);
       dirty = true;
       groupThreads();
       renderCounts();
@@ -2162,8 +2199,7 @@ function buildMyNote(stamp, text, done, who, tid) {
   txt.addEventListener("blur", () => {
     if (txt.innerText.trim() || composing) return;
     if (text) {                           // 原本有内容，算一次主动删除
-      noteDeletes++;
-      div.remove();
+      dropNoteByUser(div);
       dirty = true;
       groupThreads();
       renderCounts();
@@ -2174,7 +2210,7 @@ function buildMyNote(stamp, text, done, who, tid) {
     dropTimer = setTimeout(() => {        // 宽限期满仍是空的，才真的丢
       if (!div.isConnected || txt.innerText.trim()) return;
       if (document.activeElement === txt) return;
-      div.remove();
+      dropNoteByUser(div);   // 空批注本就没落过盘，记一笔也只是让护栏宽一格
       dirty = true;
       groupThreads();
       renderCounts();
@@ -2184,8 +2220,7 @@ function buildMyNote(stamp, text, done, who, tid) {
   });
 
   div.querySelector(".in-del").onclick = () => {
-    noteDeletes++;
-    div.remove();
+    dropNoteByUser(div);
     dirty = true;
     groupThreads();
     renderCounts();
@@ -2617,6 +2652,9 @@ async function shareBook() {
 }
 
 editor.addEventListener("input", (e) => {
+  // 这一轮输入摘掉的批注＝她自己删的，当场结算。只在 input 里结算是关键：
+  // 留到保存时再算的话，渲染 bug 摘掉的批注也会被当成她删的，护栏就哑了。
+  drainNoteRemovals();
   dirty = true;
   trackTyping();
   rememberEditPos();
@@ -2800,12 +2838,15 @@ async function save() {
 
   const was = countNotes(current.baseContent || "");
   const now = countNotes(content);
+  let lostNotes = 0;
   if (now < was - noteDeletes) {
-    // 没经过删除按钮，批注却变少了 —— 只可能是渲染或 DOM 操作出了问题。
-    // 宁可不保存：磁盘上那份是完好的，重新打开就能拿回来。
-    setSync(`已中止保存：批注从 ${was} 条变成 ${now} 条，且未经删除操作。请重新打开本篇`, "err");
-    console.error("[批注护栏] 中止保存", { was, now, noteDeletes, name: current.name });
-    return;
+    // 批注少了，又不是她动手删的 —— 大概率是渲染或 DOM 操作出了问题。
+    // 但**不再中止保存**：挡住她的编辑本身就是数据丢失（删除存不进去、
+    // 页面从此不再同步）。改为把掉批注之前那份留底，再照常保存。
+    lostNotes = was - noteDeletes - now;
+    backupConflict(current.baseContent || "", `掉批注前·${current.name}`);
+    console.error("[批注护栏] 批注对不上，已留底后照常保存",
+                  { was, now, noteDeletes, name: current.name });
   }
   try {
     const sentActiveMs = Math.round(pendingActiveMs);
@@ -2825,7 +2866,9 @@ async function save() {
       renderCounts();
       setTodayDelta(data.deltaCjk);
       const t = new Date();
-      setSync(`已同步 ${pad2(t.getHours())}:${pad2(t.getMinutes())}`, "ok");
+      setSync(lostNotes
+        ? `已同步，但有 ${lostNotes} 条批注不见了（掉之前那份已留底：控制台 restoreConflictBackup(0)）`
+        : `已同步 ${pad2(t.getHours())}:${pad2(t.getMinutes())}`, lostNotes ? "err" : "ok");
     } else if (data.conflict) {
       backupConflict(content);                 // 先留底，再谈合并
       if (await mergeOnConflict(content)) return;
