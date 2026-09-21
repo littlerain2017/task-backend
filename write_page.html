@@ -300,7 +300,7 @@
 
   /* 段落书签：鎏金左线 + 微金底 + 🔖 */
   #editor .line.marked {
-    background: rgba(211, 178, 92, 0.07);
+    background: var(--mark-fill, rgba(211, 178, 92, 0.07));
     border-left: 3px solid var(--gold);
     padding-left: 14px;
     margin-left: -17px;
@@ -325,6 +325,7 @@
     border-left: 3px solid var(--note);
     background: var(--note-soft);
     border-radius: 0 8px 8px 0;
+    box-shadow: inset 0 0 0 1px var(--note-border, transparent);
     text-indent: 0;
     font-size: 0.82em;
     line-height: 1.65;
@@ -340,7 +341,7 @@
   /* 作者自己的批注：鎏金，与朋友留言（冷蓝）区分开 */
   #editor .note.my-note {
     border-left-color: var(--gold);
-    background: rgba(211, 178, 92, 0.08);
+    background: var(--note-fill, rgba(211, 178, 92, 0.08));
   }
   #editor .note.my-note .in-head { color: var(--gold); }
   #editor .note.my-note .in-text { color: var(--ink-soft); }
@@ -367,7 +368,7 @@
   /* 已处理：整块退到背景里，但内容仍可读——你还要能回头看当初为什么改 */
   #editor .note.my-note.done {
     border-left-color: var(--faint, #5f5849);
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--note-done-fill, rgba(255, 255, 255, 0.02));
   }
   #editor .note.my-note.done .in-tick,
   #editor .note.my-note.done .in-head { color: var(--faint, #5f5849); }
@@ -391,7 +392,7 @@
      正文不可编辑，所以不给 :focus 描边，也不出「写点什么…」的占位。 */
   #editor .note.my-note.ai-note {
     border-left-color: var(--green);
-    background: rgba(125, 156, 106, 0.09);
+    background: var(--ai-fill, rgba(125, 156, 106, 0.09));
   }
   #editor .note.my-note.ai-note .in-head { color: var(--green); }
   #editor .note.my-note.ai-note .in-tick { color: var(--green); }
@@ -1143,6 +1144,9 @@ const DARK = {
   scChar: "#96bd9c", scTrans: "#a89bc9",
   hlRed: "#e6897a", hlAmber: "#e0a860", hlGreen: "#8fc99a",
   hlCyan: "#79c3c3", hlViolet: "#b6a0da",
+  noteFill: "rgba(211,178,92,0.08)", noteDoneFill: "rgba(255,255,255,0.02)",
+  aiFill: "rgba(125,156,106,0.09)", markFill: "rgba(211,178,92,0.07)",
+  noteBorder: "transparent",
 };
 
 const TONES = {
@@ -1168,6 +1172,9 @@ const TONES = {
     scChar: "#4A7A55", scTrans: "#6A5296",
     hlRed: "#B0483A", hlAmber: "#9C6B14", hlGreen: "#4A7A55",
     hlCyan: "#2B7070", hlViolet: "#6A5296",
+    noteFill: "rgba(126,96,25,0.16)", noteDoneFill: "rgba(43,38,32,0.03)",
+    aiFill: "rgba(92,122,74,0.13)", markFill: "rgba(126,96,25,0.10)",
+    noteBorder: "rgba(43,38,32,0.10)",
   },
   "石墨": {
     light: true,
@@ -1181,6 +1188,9 @@ const TONES = {
     scChar: "#3F6B4A", scTrans: "#7A5BA8",
     hlRed: "#A6453A", hlAmber: "#8A6412", hlGreen: "#3F6B4A",
     hlCyan: "#0B6A6E", hlViolet: "#7A5BA8",
+    noteFill: "rgba(11,106,110,0.14)", noteDoneFill: "rgba(28,33,32,0.03)",
+    aiFill: "rgba(63,107,74,0.12)", markFill: "rgba(11,106,110,0.09)",
+    noteBorder: "rgba(28,33,32,0.10)",
   },
   "晨雾": {
     light: true,
@@ -1194,6 +1204,9 @@ const TONES = {
     scChar: "#456B4E", scTrans: "#5B4C9B",
     hlRed: "#A8453F", hlAmber: "#A8631F", hlGreen: "#456B4E",
     hlCyan: "#2A6A78", hlViolet: "#5B4C9B",
+    noteFill: "rgba(153,89,26,0.14)", noteDoneFill: "rgba(35,39,46,0.03)",
+    aiFill: "rgba(69,107,78,0.12)", markFill: "rgba(153,89,26,0.09)",
+    noteBorder: "rgba(35,39,46,0.10)",
   },
 };
 
@@ -1206,6 +1219,8 @@ const TONE_VARS = {
   faint: "--faint", scrollbar: "--scrollbar", scChar: "--sc-char", scTrans: "--sc-trans",
   hlRed: "--hl-red", hlAmber: "--hl-amber", hlGreen: "--hl-green",
   hlCyan: "--hl-cyan", hlViolet: "--hl-violet",
+  noteFill: "--note-fill", noteDoneFill: "--note-done-fill",
+  aiFill: "--ai-fill", markFill: "--mark-fill", noteBorder: "--note-border",
 };
 
 let token = localStorage.getItem("writing_token") || "";
