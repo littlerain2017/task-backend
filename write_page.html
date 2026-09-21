@@ -36,7 +36,7 @@
   }
   ::selection { background: rgba(211, 178, 92, 0.28); }
   ::-webkit-scrollbar { width: 10px; }
-  ::-webkit-scrollbar-thumb { background: #2e2a24; border-radius: 5px; }
+  ::-webkit-scrollbar-thumb { background: var(--scrollbar, #2e2a24); border-radius: 5px; }
   ::-webkit-scrollbar-track { background: transparent; }
 
   /* ===== 吸顶栏 ===== */
@@ -186,7 +186,7 @@
   .btn {
     font-family: inherit;
     font-size: 13.5px;
-    color: #beb5a2;
+    color: var(--ink-soft, #beb5a2);
     background: transparent;
     border: 1px solid rgba(233, 226, 211, 0.14);
     border-radius: 8px;
@@ -290,7 +290,7 @@
   #editor .line.rule {
     text-indent: 0;
     text-align: center;
-    color: #55503f;
+    color: var(--faint, #55503f);
     letter-spacing: 0.5em;
     margin: 2.2em 0;
   }
@@ -330,7 +330,7 @@
     line-height: 1.65;
   }
   #editor .note .in-head { color: var(--note); font-size: 0.85em; letter-spacing: 0.04em; }
-  #editor .note .in-text { color: #cfe0e9; white-space: pre-wrap; margin-top: 3px; }
+  #editor .note .in-text { color: var(--note-text, #cfe0e9); white-space: pre-wrap; margin-top: 3px; }
   #editor .note .in-del {
     position: absolute; right: 10px; top: 8px; color: var(--muted);
     cursor: pointer; font-size: 14px; line-height: 1;
@@ -426,11 +426,11 @@
     color: var(--muted);
   }
   ::highlight(mk) { color: rgba(95, 88, 73, 0.55); }
-  ::highlight(hl-red)    { color: #e6897a; }
-  ::highlight(hl-amber)  { color: #e0a860; }
-  ::highlight(hl-green)  { color: #8fc99a; }
-  ::highlight(hl-cyan)   { color: #79c3c3; }
-  ::highlight(hl-violet) { color: #b6a0da; }
+  ::highlight(hl-red)    { color: var(--hl-red, #e6897a); }
+  ::highlight(hl-amber)  { color: var(--hl-amber, #e0a860); }
+  ::highlight(hl-green)  { color: var(--hl-green, #8fc99a); }
+  ::highlight(hl-cyan)   { color: var(--hl-cyan, #79c3c3); }
+  ::highlight(hl-violet) { color: var(--hl-violet, #b6a0da); }
   /* 顾问标记：用底色而不是字色，跟上面五个纯色区分开——它不是分类，是待办 */
   ::highlight(hl-ask) { color: var(--gold); background-color: rgba(211, 178, 92, 0.22); }
 
@@ -489,7 +489,7 @@
   #editor.script .line.sc-char {
     padding-left: 28ch;
     text-transform: uppercase;
-    color: #96bd9c;
+    color: var(--sc-char, #96bd9c);
   }
   #editor.script .line.sc-dial {
     padding-left: 18ch;
@@ -504,7 +504,7 @@
   #editor.script .line.sc-trans {
     text-align: right;
     text-transform: uppercase;
-    color: #a89bc9;
+    color: var(--sc-trans, #a89bc9);
   }
   #editor.script .line.sc-action {
     color: var(--ink-soft);
@@ -537,7 +537,7 @@
     font-weight: 500;
     font-variant-numeric: tabular-nums;
     letter-spacing: 0.02em;
-    color: #beb5a2;
+    color: var(--ink-soft, #beb5a2);
   }
   .timer .t-label {
     font-size: 12px;
@@ -551,7 +551,7 @@
     font-variant-numeric: tabular-nums;
     letter-spacing: 0.04em;
     text-align: center;
-    color: #beb5a2;
+    color: var(--ink-soft, #beb5a2);
     transition: color 0.3s;
   }
   .timer .clock.running { color: var(--gold-bright); }
@@ -598,7 +598,7 @@
     border: 1px solid var(--line);
     cursor: pointer;
   }
-  .tone.active { border-color: var(--gold); box-shadow: 0 0 0 2px rgba(211, 178, 92, 0.3); }
+  .tone.active { border-color: var(--gold); box-shadow: 0 0 0 2px var(--gold-line, rgba(211,178,92,0.3)); }
   #prefs input[type="range"] { width: 100%; accent-color: var(--gold); }
   .switch { display: flex; justify-content: space-between; align-items: center; color: var(--ink-soft); }
 
@@ -1131,12 +1131,81 @@ const REFRESH_MS = 20000;
 const EMPTY_NOTE_GRACE_MS = 8000;
 const TYPING_IDLE_MS = 5000;  // 停笔 5 秒计时即暂停（句内停顿不断流）
 
+/* 深色五调共用的其余 token —— 就是原来 :root 里那一套，值没动过。
+   以前 tone 只换 bg/header/ink，其余写死在 :root，所以没法做白天模式。 */
+const DARK = {
+  inkSoft: "#cfc6b2", muted: "#8a8172",
+  gold: "#d3b25c", goldBright: "#e8cd85",
+  green: "#7d9c6a", greenBright: "#a3c48d", red: "#c96a5a",
+  line: "rgba(233,226,211,0.12)", goldLine: "rgba(211,178,92,0.18)",
+  note: "#7bb0c9", noteSoft: "rgba(123,176,201,0.12)", noteText: "#cfe0e9",
+  faint: "#5f5849", scrollbar: "#2e2a24",
+  scChar: "#96bd9c", scTrans: "#a89bc9",
+  hlRed: "#e6897a", hlAmber: "#e0a860", hlGreen: "#8fc99a",
+  hlCyan: "#79c3c3", hlViolet: "#b6a0da",
+};
+
 const TONES = {
-  "暖黑":   { bg: "#171512", header: "rgba(23,21,18,0.82)",  ink: "#e9e2d3" },
-  "纯黑":   { bg: "#0d0c0b", header: "rgba(13,12,11,0.82)",  ink: "#e6e1d6" },
-  "墨绿":   { bg: "#141a16", header: "rgba(20,26,22,0.82)",  ink: "#e4e6d9" },
-  "藏蓝":   { bg: "#13161d", header: "rgba(19,22,29,0.82)",  ink: "#e2e4e6" },
-  "咖啡褐": { bg: "#1b1512", header: "rgba(27,21,18,0.82)",  ink: "#ecdfd0" },
+  "暖黑":   { bg: "#171512", header: "rgba(23,21,18,0.82)",  ink: "#e9e2d3", ...DARK },
+  "纯黑":   { bg: "#0d0c0b", header: "rgba(13,12,11,0.82)",  ink: "#e6e1d6", ...DARK },
+  "墨绿":   { bg: "#141a16", header: "rgba(20,26,22,0.82)",  ink: "#e4e6d9", ...DARK },
+  "藏蓝":   { bg: "#13161d", header: "rgba(19,22,29,0.82)",  ink: "#e2e4e6", ...DARK },
+  "咖啡褐": { bg: "#1b1512", header: "rgba(27,21,18,0.82)",  ink: "#ecdfd0", ...DARK },
+
+  /* ===== 白天模式 =====
+     没有纯白底，三版明度都压在 91–92%。鎏金在浅底上容易发脏发闷，
+     所以只有「宣纸」保留金，另两版把「未处理批注」的活交给别的颜色，
+     留言色也跟着换，避免和强调色撞。 */
+  "宣纸": {
+    light: true,
+    bg: "#F0EDE6", header: "rgba(240,237,230,0.88)", ink: "#2B2620",
+    inkSoft: "#514839", muted: "#6E6555",
+    gold: "#7E6019", goldBright: "#634B11",
+    green: "#5C7A4A", greenBright: "#46612F", red: "#B2513F",
+    line: "rgba(43,38,32,0.14)", goldLine: "rgba(138,106,32,0.28)",
+    note: "#37718C", noteSoft: "rgba(55,113,140,0.10)", noteText: "#2F5566",
+    faint: "#A9A092", scrollbar: "#CFC8B8",
+    scChar: "#4A7A55", scTrans: "#6A5296",
+    hlRed: "#B0483A", hlAmber: "#9C6B14", hlGreen: "#4A7A55",
+    hlCyan: "#2B7070", hlViolet: "#6A5296",
+  },
+  "石墨": {
+    light: true,
+    bg: "#E7EAE7", header: "rgba(231,234,231,0.88)", ink: "#1C2120",
+    inkSoft: "#3D4644", muted: "#616A68",
+    gold: "#0B6A6E", goldBright: "#084F52",
+    green: "#3F6B4A", greenBright: "#2E5236", red: "#A6453A",
+    line: "rgba(28,33,32,0.14)", goldLine: "rgba(11,106,110,0.28)",
+    note: "#7A5BA8", noteSoft: "rgba(122,91,168,0.10)", noteText: "#4A3970",
+    faint: "#9BA3A1", scrollbar: "#C6CDCA",
+    scChar: "#3F6B4A", scTrans: "#7A5BA8",
+    hlRed: "#A6453A", hlAmber: "#8A6412", hlGreen: "#3F6B4A",
+    hlCyan: "#0B6A6E", hlViolet: "#7A5BA8",
+  },
+  "晨雾": {
+    light: true,
+    bg: "#E8EBF0", header: "rgba(232,235,240,0.88)", ink: "#23272E",
+    inkSoft: "#434A55", muted: "#5E6672",
+    gold: "#99591A", goldBright: "#7A4510",
+    green: "#456B4E", greenBright: "#33523A", red: "#A8453F",
+    line: "rgba(35,39,46,0.14)", goldLine: "rgba(168,99,31,0.28)",
+    note: "#3A4E8C", noteSoft: "rgba(58,78,140,0.10)", noteText: "#2C3B6B",
+    faint: "#9AA0AB", scrollbar: "#C3C9D4",
+    scChar: "#456B4E", scTrans: "#5B4C9B",
+    hlRed: "#A8453F", hlAmber: "#A8631F", hlGreen: "#456B4E",
+    hlCyan: "#2A6A78", hlViolet: "#5B4C9B",
+  },
+};
+
+/* tone 字段 → CSS 变量。加新色只要在这里登记一次。 */
+const TONE_VARS = {
+  bg: "--bg", header: "--header", ink: "--ink", inkSoft: "--ink-soft", muted: "--muted",
+  gold: "--gold", goldBright: "--gold-bright", green: "--green", greenBright: "--green-bright",
+  red: "--red", line: "--line", goldLine: "--gold-line",
+  note: "--note", noteSoft: "--note-soft", noteText: "--note-text",
+  faint: "--faint", scrollbar: "--scrollbar", scChar: "--sc-char", scTrans: "--sc-trans",
+  hlRed: "--hl-red", hlAmber: "--hl-amber", hlGreen: "--hl-green",
+  hlCyan: "--hl-cyan", hlViolet: "--hl-violet",
 };
 
 let token = localStorage.getItem("writing_token") || "";
@@ -1171,9 +1240,8 @@ const editor = $("editor");
 function applyPrefs() {
   const t = TONES[prefs.tone] || TONES["暖黑"];
   const r = document.documentElement.style;
-  r.setProperty("--bg", t.bg);
-  r.setProperty("--header", t.header);
-  r.setProperty("--ink", t.ink);
+  Object.entries(TONE_VARS).forEach(([k, v]) => { if (t[k]) r.setProperty(v, t[k]); });
+  document.documentElement.dataset.light = t.light ? "1" : "";   // 浅底时给 CSS 留个钩子
   r.setProperty("--font-size", prefs.fontSize + "px");
   r.setProperty("--measure", prefs.measure);
   r.setProperty("--tracking", prefs.tracking + "em");
