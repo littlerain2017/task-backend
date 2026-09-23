@@ -824,6 +824,14 @@ async def advisor_find_doc(uid: str, prefix: str, starts: str) -> str:
 # season1_structure 的情况——而后者才是整本的大纲。所以分两档收集。
 CANON_HINTS = ("大纲", "outline", "世界观", "设定集", "圣经", "bible")
 STRUCT_HINTS = ("结构", "structure", "分集", "节拍", "beat")
+CHAR_HINTS = ("人物", "character", "角色", "小传", "cast")
+# 手写的「顾问须知」。有它就不读世界观/结构/人物那三份——那些是写给人看的，
+# 章节层级、更新日志、待定事项占满篇幅，顾问真正用得上的判断规则被埋在里面。
+REF_BRIEF_DOC = "_ref.md"
+# 每档单独限额，不共享一个总预算——否则第一个文件就把额度吃光
+# （营救麦克黄的大纲 3.5 万字），人物档案一个字都进不来。
+REF_DOC_LIMITS = (6000, 4000, 5000)          # 世界观 / 结构 / 人物
+REF_DOC_LIMITS_SEARCH = (2000, 1200, 1500)   # 联网要跑三段、每段重读，各砍到三分之一
 
 
 def _in_book(name: str, prefix: str) -> bool:
@@ -833,31 +841,43 @@ def _in_book(name: str, prefix: str) -> bool:
     return not (not prefix and "/" in name)
 
 
-async def ref_find_canon(uid: str, prefix: str, limit: int = 2) -> list:
-    """这本书的背景文件，按优先级最多取 limit 个：
-    书根目录的 00_（与科幻顾问同口径）→ 名字带世界观/大纲的 → 名字带结构/分集的。
-    一本书的背景常散在几个文件里，只取一个会漏掉真正的剧情大纲。"""
-    names = sorted(d.get("name", "") for d in await writing_doc_metas(uid))
-    out = []
+async def ref_find_canon(uid: str, prefix: str) -> list:
+    """这本书的背景文件，返回 [(文件名, 档位)]，档位 0=世界观 1=结构 2=人物。
 
-    def take(n):
-        if n and n not in out:
-            out.append(n)
+    书里有手写的 _ref.md「顾问须知」就只读它，别的一概不读——那份是专门
+    为顾问写的判断规则，比让它去啃写给人看的世界观准得多。
+
+    没有 _ref.md 才退回去读那三份。一本书的背景常散在几个文件里，只取一个
+    会漏掉剧情大纲或人物档案；但每档只取一个，因为同档里的多个文件往往是
+    同一东西的不同版本（营救麦克黄有两份大纲），一起喂进去只会让它打架。"""
+    names = sorted(d.get("name", "") for d in await writing_doc_metas(uid))
 
     for n in names:
+        if _in_book(n, prefix) and n[len(prefix):] == REF_BRIEF_DOC:
+            return [(n, 0)]
+
+    out, seen = [], set()
+
+    def take(n, tier):
+        if n and n not in seen:
+            seen.add(n)
+            out.append((n, tier))
+            return True
+        return False
+
+    # 书根目录的 00_ 与科幻顾问同口径，算世界观档
+    for n in names:
         if _in_book(n, prefix) and "/" not in n[len(prefix):] and n[len(prefix):].startswith(CANON_PREFIX):
-            take(n)
+            take(n, 0)
             break
-    # 每档只取一个：同一档里的多个文件往往是同一东西的不同版本
-    # （营救麦克黄有两份大纲），一起喂进去只会让顾问在版本之间打架。
-    for hints in (CANON_HINTS, STRUCT_HINTS):
+    for tier, hints in enumerate((CANON_HINTS, STRUCT_HINTS, CHAR_HINTS)):
+        if any(t == tier for _, t in out):
+            continue          # 这档已经有了（00_ 占了世界观档），别再塞第二份
         for n in names:
-            if len(out) >= limit:
-                return out[:limit]
             if _in_book(n, prefix) and any(h in n.rsplit("/", 1)[-1].lower() for h in hints):
-                take(n)
+                take(n, tier)
                 break
-    return out[:limit]
+    return out
 
 
 async def ref_find_taste(uid: str, prefix: str) -> str:
@@ -1386,17 +1406,14 @@ async def reference_advisor(req: RefAdvisorRequest):
     # 联网要跑三段、每段重读一遍，所以额度压小；不联网是单次调用，可以给足。
     canon_block, canon_name = "", ""
     try:
-        budget = REF_CANON_LIMIT_SEARCH if use_search else REF_CANON_LIMIT
+        limits = REF_DOC_LIMITS_SEARCH if use_search else REF_DOC_LIMITS
         docs = await ref_find_canon(uid, advisor_book_prefix(name))
         picked, texts = [], []
-        for dn in docs:
-            if budget <= 0:
-                break
-            body = (await advisor_doc_text(uid, dn)).strip()[:budget]
+        for dn, tier in docs:
+            body = (await advisor_doc_text(uid, dn)).strip()[:limits[tier]]
             if body:
                 picked.append(dn)
                 texts.append(f"—— {dn.rsplit('/', 1)[-1]} ——\n{body}")
-                budget -= len(body)
         if texts:
             canon_name = " + ".join(d.rsplit("/", 1)[-1] for d in picked)
             canon_block = REF_CANON_BLOCK.format(canon_name=canon_name,
