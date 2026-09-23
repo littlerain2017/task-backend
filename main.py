@@ -1155,6 +1155,8 @@ class RefAdvisorRequest(BaseModel):
     mode: str = "find"       # find=给稿子找参考 / stuck=卡住了求解法
     question: str = ""       # stuck 模式必填：卡在哪
     text: str = ""           # 选中的段落，或整篇正文
+    before: str = ""         # 选中处的上文——只给选中那几句，顾问不知道它在哪
+    after: str = ""          # 选中处的下文
     notes: str = ""          # 整篇里未完成的作者批注，前端已剥掉 ✓ 过的
     recent: list[str] = []   # 前端记的最近推荐过的作品名——模型没有记忆，重复只能靠这个挡
     name: str = ""           # 当前文档名，用于定位这本书的 00_ 设定
@@ -1171,6 +1173,21 @@ REF_CANON_BLOCK = """
 # 试过顺带抓裸英文，结果把 Roy Andersson、Laura Dern、HBO，乃至作者自己的
 # 主角名 Lora 和项目名 THE ROOM 全抓进了"禁止提及"，比漏掉几部还糟。
 TITLE_CJK_RE = re.compile(r"《([^》\n]{1,40})》")
+
+
+def ref_scene_block(text: str, before: str = "", after: str = "") -> str:
+    """把正文包成给顾问看的块。有上下文时，把作者选中的那段钉在中间——
+    只给选中的几句，顾问不知道它在整场里的位置，读不出它前面发生了什么。"""
+    if not (before or after):
+        return f"<场次>\n{text}\n</场次>"
+    parts = ["<场次>"]
+    if before:
+        parts.append(f"……（上文）\n{before}\n")
+    parts.append(f">>> 作者问的是下面这段 >>>\n{text}\n<<< 到这里 <<<")
+    if after:
+        parts.append(f"\n（下文）\n{after}……")
+    parts.append("</场次>")
+    return "\n".join(parts)
 
 
 def ref_extract_titles(taste: str, limit: int = 60) -> list:
@@ -1220,9 +1237,7 @@ REF_FIND_TEMPLATE = """作者正在写{where}。
 {canon_block}{taste_block}{recent_block}{notes_block}
 下面是她要你看的文字：
 
-<场次>
-{text}
-</场次>
+{scene}
 
 按你的「找参考」流程回答：先一句话说这几场在处理什么难题（按「一切必须能拍出来」
 这把尺子判断——通常是某个内在的东西需要外化），再给 2-4 部处理过**同类难题**的作品。
@@ -1274,6 +1289,7 @@ async def kimi_diag(req: KimiDiagRequest):
         "ref_search": MOONSHOT_REF_SEARCH,
         "reasoning_effort": MOONSHOT_REASONING_EFFORT or "(未设)",
         "key_sha8": hashlib.sha256(MOONSHOT_API_KEY.encode()).hexdigest()[:8] if MOONSHOT_API_KEY else "",
+        "anthropic_key": bool(ANTHROPIC_API_KEY),
     }
 
 
@@ -1288,9 +1304,7 @@ def ref_ruler() -> str:
 
 REF_BRIEF_SYS = "你是剧本顾问，只回答问题本身，不写寒暄。\n\n{ruler}"
 
-REF_BRIEF_USER = """<场次>
-{text}
-</场次>
+REF_BRIEF_USER = """{scene}
 
 读这几场，按上面那把尺子做一份简短诊断。只写这三项，不要多写：
 
@@ -1314,12 +1328,10 @@ REF_COMPOSE_USER = """现在按下面的规则，把上面搜到的东西整理�
 {persona}
 </规则>
 {canon_block}{taste_block}{recent_block}{notes_block}
-<场次>
-{text}
-</场次>"""
+{scene}"""
 
 
-async def ref_three_stage(persona: str, blocks: dict, text: str):
+async def ref_three_stage(persona: str, blocks: dict, scene: str):
     """联网版的「找参考」，分三段跑。
 
     起因：k2.6 在长输入下思维链会失控——给多少 max_tokens 烧多少，正文为空
@@ -1334,17 +1346,17 @@ async def ref_three_stage(persona: str, blocks: dict, text: str):
     # 给 600 会被它吃光、正文为空（线上踩过）。输出本身只有一两百字。
     brief, _ = await moonshot_chat(
         REF_BRIEF_SYS.format(ruler=ref_ruler()),
-        REF_BRIEF_USER.format(text=text), 2500,
+        REF_BRIEF_USER.format(scene=scene), 2500,
         model=MOONSHOT_REF_MODEL, thinking={"type": "enabled"})
 
     msgs = [{"role": "system", "content": "你是剧本顾问，只回答问题本身。"},
-            {"role": "user", "content": REF_SEARCH_USER.format(brief=brief or text[:500])}]
+            {"role": "user", "content": REF_SEARCH_USER.format(brief=brief or scene[:500])}]
     _, meta = await moonshot_run(
         msgs, 2000, model=MOONSHOT_REF_MODEL, tools=REF_TOOLS,
         thinking={"type": "enabled"})
 
     msgs.append({"role": "user",
-                 "content": REF_COMPOSE_USER.format(persona=persona, text=text,
+                 "content": REF_COMPOSE_USER.format(persona=persona, scene=scene,
                                                     brief=brief, **blocks)})
     answer, _ = await moonshot_run(
         msgs, 8000, model=MOONSHOT_REF_MODEL, thinking={"type": "disabled"})
@@ -1409,6 +1421,8 @@ async def reference_advisor(req: RefAdvisorRequest):
         print(f"[ref] 读取《{book}》参考库失败，按无参考库继续: {e}")
         taste_name = ""
 
+    scene = ref_scene_block(text, req.before.strip()[:800], req.after.strip()[:800])
+
     notes = req.notes.strip()[:REF_NOTES_LIMIT]
     notes_block = REF_NOTES_BLOCK.format(notes=notes) if notes else ""
 
@@ -1421,12 +1435,12 @@ async def reference_advisor(req: RefAdvisorRequest):
             return {"ok": False, "error": "先在正文里选中一段，或打开一篇有内容的文档"}
         user_msg = REF_FIND_TEMPLATE.format(
             where=where, canon_block=canon_block, taste_block=taste_block,
-            recent_block=recent_block, notes_block=notes_block, text=text,
+            recent_block=recent_block, notes_block=notes_block, scene=scene,
         )
     else:
         if not question:
             return {"ok": False, "error": "先说说你卡在哪"}
-        text_block = f"\n相关的场次：\n<场次>\n{text}\n</场次>\n" if text else ""
+        text_block = f"\n相关的场次：\n{scene}\n" if text else ""
         user_msg = REF_STUCK_TEMPLATE.format(
             where=where, canon_block=canon_block, taste_block=taste_block,
             recent_block=recent_block, notes_block=notes_block,
@@ -1448,7 +1462,7 @@ async def reference_advisor(req: RefAdvisorRequest):
         if use_search:
             answer, meta = await ref_three_stage(
                 persona, {"canon_block": canon_block, "taste_block": taste_block,
-                          "recent_block": recent_block, "notes_block": notes_block}, text)
+                          "recent_block": recent_block, "notes_block": notes_block}, scene)
         else:
             answer, meta = await moonshot_chat(
                 persona, user_msg, 8000, model=MOONSHOT_REF_MODEL,

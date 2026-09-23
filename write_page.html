@@ -3203,6 +3203,18 @@ function refRemember(answer) {
   try { localStorage.setItem(REF_RECENT_KEY, JSON.stringify(merged)); } catch {}
 }
 
+/* 选中处前后各取一段。只把选中的那几句发过去，顾问不知道它在整场里的
+   位置，也读不出它前面刚发生了什么——问"这句怎么改"时这层缺失最要命。 */
+function selectionContext(sel, full, pad = 800) {
+  const clean = stripNotes(full);
+  const i = clean.indexOf(sel);
+  if (i < 0) return { before: "", after: "" };
+  return {
+    before: clean.slice(Math.max(0, i - pad), i).trim(),
+    after: clean.slice(i + sel.length, i + sel.length + pad).trim(),
+  };
+}
+
 /* 标了「问」的段落，按阅读顺序。highlights 里存的 text 就是标记时的原文，
    段落改动后由 renderHighlights 的锚点自愈负责更新，这里直接用。 */
 function askMarks() {
@@ -3247,6 +3259,8 @@ async function runRef(mode) {
   const marked = askMarks();
   const text = picked || marked.join("\n\n") || stripNotes(full).trim();
   const notes = collectNotes(full);
+  // 只有"选中"这一档需要补上下文：标记段和整篇本身就带着位置信息
+  const ctx = picked ? selectionContext(picked, full) : { before: "", after: "" };
   const source = picked ? "选中段落" : marked.length ? `${marked.length} 段标记` : "整篇";
   if (mode === "find" && !text) {
     out.innerHTML = '<span class="ad-err">这篇还是空的，先写点东西。</span>';
@@ -3266,6 +3280,8 @@ async function runRef(mode) {
       question,
       text,
       notes,
+      before: ctx.before,
+      after: ctx.after,
       recent: refRecent(),
       name: current.name,
     });
@@ -3280,7 +3296,8 @@ async function runRef(mode) {
         (data.taste ? ` · 参考库 ${data.taste.split("/").pop()}` : "") +
         (data.searched ? ` · 联网搜了 ${data.searched} 次` : "") +
         (data.degraded ? ` · ⚠ ${data.degraded}` : "") +
-        (data.notes ? ` · 批注 ${data.notes} 条` : "");
+        (data.notes ? ` · 批注 ${data.notes} 条` : "") +
+        (ctx.before || ctx.after ? " · 带上下文" : "");
     }
   } catch (e) {
     out.innerHTML = '<span class="ad-err">网络错误：' + e.message + "</span>";
