@@ -20,6 +20,10 @@
     --red: #c96a5a;
     --line: rgba(233, 226, 211, 0.12);
     --gold-line: rgba(211, 178, 92, 0.18);
+    /* 书架专用：从 --gold 实时派生。--gold-line 是写死的金色，不跟色调走，
+       书架换成别的强调色时会露出一圈金边和文字打架。 */
+    --shelf-edge: color-mix(in srgb, var(--gold) 42%, transparent);
+    --shelf-edge-soft: color-mix(in srgb, var(--gold) 26%, transparent);
     --note: #7bb0c9;
     --note-soft: rgba(123, 176, 201, 0.12);
   }
@@ -834,12 +838,12 @@
   }
   .book-card:hover {
     transform: translateY(-6px);
-    border-color: var(--gold-line);
+    border-color: var(--shelf-edge-soft);
     background: rgba(255, 255, 255, 0.05);
     box-shadow: 0 26px 64px rgba(0, 0, 0, 0.58);
   }
   /* 最近写过的那一本：鎏金边 + 顶部一道细光 */
-  .book-card.current { border-color: rgba(211, 178, 92, 0.42); }
+  .book-card.current { border-color: var(--shelf-edge); }
   .book-card.current::before {
     content: "";
     position: absolute;
@@ -895,7 +899,7 @@
     transition: opacity 0.25s, color 0.2s, border-color 0.2s;
   }
   .book-card:hover .bc-addchap { opacity: 1; }
-  .book-card .bc-addchap:hover { color: var(--gold); border-color: var(--gold-line); }
+  .book-card .bc-addchap:hover { color: var(--gold); border-color: var(--shelf-edge-soft); }
   @media (hover: none) { .book-card .bc-addchap { opacity: 1; } }
   .book-card.new {
     border-style: dashed;
@@ -909,7 +913,7 @@
     background: transparent;
     box-shadow: none;
   }
-  .book-card.new:hover { color: var(--gold); border-color: var(--gold-line); background: transparent; }
+  .book-card.new:hover { color: var(--gold); border-color: var(--shelf-edge-soft); background: transparent; }
   @media (max-width: 600px) {
     .book-card { width: 100%; }
   }
