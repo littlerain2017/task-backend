@@ -10,6 +10,9 @@
     python3 watcher.py          # 常驻同步
     python3 watcher.py --once   # 同步一轮后退出
     python3 watcher.py --reset  # 重新配置
+    python3 watcher.py revision start 营救麦克黄  # 暂停整本书的自动覆盖
+    python3 watcher.py revision finish           # 安全提交本轮本地修改
+    python3 watcher.py revision status           # 查看修订锁
 """
 import hashlib
 import json
@@ -28,8 +31,11 @@ STATE_PATH = Path.home() / ".writing-watcher-state.json"
 BACKUP_DIR = Path.home() / ".writing-watcher-backups"
 QUARANTINE_DIR = Path.home() / ".writing-watcher-quarantine"
 BASE_DIR = Path.home() / ".writing-watcher-base"      # 每份文件"上次同步时的样子"，冲突时当共同祖先
+REVISION_PATH = Path.home() / ".writing-watcher-revision.json"
+REVISION_CONFLICT_DIR = Path.home() / ".writing-watcher-revision-conflicts"
 POLL_SECONDS = 2
 PULL_EVERY_SECONDS = 15
+QUIET_SECONDS = 12      # 安静期：磁盘 mtime 在此秒数内动过=她正在打字，这一轮完全跳过该文件
 IDLE_GAP_SECONDS = 180  # 两次文件变化间隔超过 3 分钟不计入写作时长
 HTTP_TIMEOUT = 20
 SYNC_EXTENSIONS = (".md", ".txt")      # 双向同步
@@ -39,12 +45,13 @@ READONLY_EXTENSIONS = (".docx",)       # 只上行（网页只读）
 # 注意只看**目录**前缀——根目录下的 _advisor.md / _conflicts.md 仍需同步给顾问，
 # 它们不计字数是由后端负责的（见 main.py NO_COUNT）。
 SKIP_NAMES = {"CLAUDE.md", "AGENTS.md", "README.md"}
+SKIP_DIRS = {"tmp", "pdfs"}      # 临时/生成目录（PDF 抽取残留等），不是书稿，不同步也不重试
 
 
 def is_skipped(rel):
     if rel.name in SKIP_NAMES:
         return True
-    return any(part.startswith("_") for part in rel.parts[:-1])
+    return any(part.startswith("_") or part in SKIP_DIRS for part in rel.parts[:-1])
 
 XML_TAG_RE = re.compile(r"<[^>]+>")
 # 与后端 writing_logic.NOTE_LINE_RE 同一口径。作者批注只存在于正文里，
@@ -54,6 +61,23 @@ NOTE_LINE_RE = re.compile(r"^[ \t]*<!--\s*批注\s.*?-->[ \t]*$", re.MULTILINE)
 
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+def recently_edited(path):
+    """磁盘 mtime 在安静期内 = 她正在打字，本轮别碰这个文件（不推、不合并、不写回）。"""
+    try:
+        return time.time() - Path(path).stat().st_mtime < QUIET_SECONDS
+    except OSError:
+        return False
+
+
+def is_dataless(path):
+    """跳过未下载的 iCloud 占位文件，读取它会让整个同步器一直阻塞。"""
+    try:
+        stat = path.stat()
+        return stat.st_size > 0 and getattr(stat, "st_blocks", 1) == 0
+    except OSError:
+        return False
 
 
 def sha(text):
@@ -234,11 +258,43 @@ def load_state():
             pass
     state.setdefault("note_counts", {})  # 旧 state 文件没有这两项
     state.setdefault("cloud_at", {})
+    state.setdefault("rejected", {})   # 被服务端永久拒收的文件 → 内容指纹
     return state
 
 
 def save_state(state):
     STATE_PATH.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+
+
+def load_revision():
+    if not REVISION_PATH.exists():
+        return {"files": {}}
+    try:
+        data = json.loads(REVISION_PATH.read_text(encoding="utf-8"))
+        data.setdefault("files", {})
+        return data
+    except (OSError, json.JSONDecodeError):
+        return {"files": {}}
+
+
+def save_revision(data):
+    if not data.get("files"):
+        REVISION_PATH.unlink(missing_ok=True)
+        return
+    tmp = REVISION_PATH.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(REVISION_PATH)
+
+
+def revision_decision(base_hash, local_hash, cloud_hash):
+    """修订结束时只自动处理单边修改；双边修改必须人工决定。"""
+    if local_hash == cloud_hash:
+        return "same"
+    if cloud_hash == base_hash:
+        return "push_local"
+    if local_hash == base_hash:
+        return "pull_cloud"
+    return "conflict"
 
 
 def scan(dirs):
@@ -252,6 +308,8 @@ def scan(dirs):
         for p in sorted(Path(watch_dir).rglob("*")):
             ext = p.suffix.lower()
             if not p.is_file() or p.name.startswith("~$") or p.name.startswith("."):
+                continue
+            if is_dataless(p):
                 continue
             rel = p.relative_to(watch_dir)
             if any(part.startswith(".") for part in rel.parts):
@@ -426,6 +484,11 @@ def seed_cloud_versions(cfg, state, files):
     log(f"云端版本号已对齐：{same} 份一致，{diverged} 份两边不一样（推送前会先比对）")
 
 
+# 服务端这几种拒绝是文件本身的问题，不是时机问题，重试没有意义。
+# "服务器内部错误"不在列——那个可能是临时的，照常重试。
+PERMANENT_REJECTS = ("非法文件名", "单文件最长", "非法编辑来源", "为只读")
+
+
 def plain_push(cfg, state, name, f, activity, base_at):
     data = post("/writing/docs/put", {
         "token": cfg["token"], "name": name, "content": f["content"],
@@ -441,16 +504,29 @@ def plain_push(cfg, state, name, f, activity, base_at):
         log(f"↑ 已推送 {name}（今日新增 {data.get('deltaCjk', '?')} 字）")
     elif not data.get("conflict"):
         log(f"推送 {name} 被拒: {data.get('error')}")
+        err = data.get("error") or ""
+        if any(k in err for k in PERMANENT_REJECTS):
+            # 这类错误重试多少次结果都一样。不记账的话每轮都要为它白等一次
+            # 往返——曾经四个超深路径的文件把日志刷满，还把 15 秒一次的拉取
+            # 饿死，她在网页上写的东西因此下不到磁盘。
+            state.setdefault("rejected", {})[name] = f["hash"]
     return data
 
 
 def push_changed(cfg, state, files, activity, prev_hashes=None):
+    locked = load_revision()["files"]
     for name, f in files.items():
+        if name in locked:
+            continue
+        if state.get("rejected", {}).get(name) == f["hash"]:
+            continue   # 上次就被永久拒收，内容还没变，别再白跑一次往返
         if state["synced_hashes"].get(name) == f["hash"]:
             state["note_counts"].setdefault(name, f["notes"])  # 首轮建立基准
             if name in state["cloud_at"] and read_base(name) is None:
                 write_base(name, f["content"])
             continue
+        if recently_edited(f["path"]):
+            continue  # 安静期：她正在打字，本轮不推/不合并/不覆盖，等手停下来再同步
         if not guard_note_loss(cfg, state, name, f, prev_hashes):
             continue
         base_at = state["cloud_at"].get(name)
@@ -466,11 +542,12 @@ def push_changed(cfg, state, files, activity, prev_hashes=None):
 def apply_web_changes(cfg, dirs, state, files, prev_hashes):
     """拉取网页端修改写回本地。写回的文件同步更新 prev_hashes，
     避免下一轮扫描把写回误判成本地打字（虚增写作时长）。"""
-    # 曾经同步到过磁盘、现在本地已删除的文件 → 明确通知云端删除
-    locally_deleted = [n for n in state["synced_hashes"] if n not in files]
+    # ponytail: 不根据一次磁盘扫描推断删除；iCloud 占位、权限和临时不可读都可能
+    # 让文件短暂消失。需要同步删除时应增加明确的 tombstone 操作。
+    locked = load_revision()["files"]
     data = post("/writing/docs/changes", {
         "token": cfg["token"], "since": state["since"],
-        "names": list(files.keys()), "deletedNames": locally_deleted,
+        "names": list(files.keys()), "deletedNames": [],
         "date": local_date(),
     })
     if not data.get("ok"):
@@ -479,6 +556,10 @@ def apply_web_changes(cfg, dirs, state, files, prev_hashes):
     for item in data.get("changed", []):
         name, content = item["name"], item["content"]
         state["since"] = max(state["since"], item.get("updatedAt", 0))
+        if name in locked:
+            if sha(content) != locked[name]["baseHash"]:
+                log(f"🔒 {name} 网页端也有修改，已留在云端；结束修订时再处理")
+            continue
         incoming_hash = sha(content)
         local = files.get(name)
         if local and local["hash"] == incoming_hash:
@@ -493,6 +574,9 @@ def apply_web_changes(cfg, dirs, state, files, prev_hashes):
         path = local["path"] if local else resolve_local_path(dirs, name)
         if path.suffix.lower() not in SYNC_EXTENSIONS:
             continue
+        if recently_edited(path):
+            log(f"⏸ {name} 正在编辑，本轮不写回网页版（等手停下来）")
+            continue  # 安静期：绝不在她打字的当口用网页版覆盖磁盘
         path.parent.mkdir(parents=True, exist_ok=True)  # 网页新建的书 → 自动建子文件夹
         if path.exists():
             BACKUP_DIR.mkdir(exist_ok=True)
@@ -518,11 +602,127 @@ def apply_web_changes(cfg, dirs, state, files, prev_hashes):
     save_state(state)
 
 
+def start_revision(cfg, dirs, selectors):
+    if load_revision()["files"]:
+        print(f"已有修订锁：{REVISION_PATH}（先运行 revision status）")
+        return 1
+    files = scan(dirs)
+    names = [name for name in files if any(
+        name == selector or name.startswith(selector.rstrip("/") + "/")
+        for selector in selectors)]
+    if not names:
+        print("没有找到要锁定的文件。请使用云端名称，例如：营救麦克黄 或 营救麦克黄/第10集.md")
+        return 1
+    cloud = post("/writing/docs/list", {"token": cfg["token"]})
+    docs = {d["name"]: d for d in cloud.get("docs", [])}
+    diverged = [name for name in names if name not in docs or docs[name].get("hash") != files[name]["hash"]]
+    if diverged:
+        print("以下文件当前两边不一致，修订锁未启动；请先让普通同步处理完：")
+        print("\n".join(f"- {name}" for name in diverged))
+        return 1
+    revision = {
+        "startedAt": datetime.now().isoformat(timespec="seconds"),
+        "files": {name: {
+            "baseUpdatedAt": docs[name].get("updatedAt"),
+            "baseHash": files[name]["hash"],
+            "baseContent": files[name]["content"],
+        } for name in names},
+    }
+    save_revision(revision)
+    print(f"修订锁已启动：{len(names)} 个文件。现在可以批量修改本地稿件。")
+    return 0
+
+
+def keep_revision_conflict(name, base, local, cloud):
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    folder = REVISION_CONFLICT_DIR / stamp / name.replace("/", "__")
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "base.md").write_text(base, encoding="utf-8")
+    (folder / "local.md").write_text(local, encoding="utf-8")
+    (folder / "cloud.md").write_text(cloud, encoding="utf-8")
+    return folder
+
+
+def finish_revision(cfg, dirs):
+    revision = load_revision()
+    if not revision["files"]:
+        print("当前没有修订锁。")
+        return 0
+    files, state = scan(dirs), load_state()
+    unresolved = {}
+    results = {"pushed": 0, "pulled": 0, "same": 0, "conflict": 0}
+    for name, base in revision["files"].items():
+        local = files.get(name)
+        fresh = post("/writing/docs/get", {"token": cfg["token"], "name": name})
+        if not local or not fresh.get("ok"):
+            unresolved[name] = base
+            results["conflict"] += 1
+            print(f"⚠ {name} 本地或云端文件缺失，继续保持锁定")
+            continue
+        cloud = fresh["content"]
+        decision = revision_decision(base["baseHash"], local["hash"], sha(cloud))
+        if decision == "push_local":
+            put = post("/writing/docs/put", {
+                "token": cfg["token"], "name": name, "content": local["content"],
+                "editor": "computer", "readonly": local["readonly"], "date": local_date(),
+                "activeMs": 0, "baseUpdatedAt": fresh.get("updatedAt"),
+            })
+            if not put.get("ok"):
+                unresolved[name] = base
+                results["conflict"] += 1
+                print(f"⚠ {name} 提交时云端又有变化，继续保持锁定")
+                continue
+            sync_point(state, name, local, put.get("updatedAt"))
+            results["pushed"] += 1
+        elif decision == "pull_cloud":
+            local["path"].write_text(cloud, encoding="utf-8")
+            local.update(content=cloud, hash=sha(cloud), notes=note_count(cloud))
+            sync_point(state, name, local, fresh.get("updatedAt"))
+            results["pulled"] += 1
+        elif decision == "same":
+            sync_point(state, name, local, fresh.get("updatedAt"))
+            results["same"] += 1
+        else:
+            folder = keep_revision_conflict(name, base["baseContent"], local["content"], cloud)
+            unresolved[name] = base
+            results["conflict"] += 1
+            print(f"⚠ {name} 本地和网页都改过，未自动覆盖；三份版本保存在 {folder}")
+    revision["files"] = unresolved
+    save_revision(revision)
+    save_state(state)
+    print("修订结束：本地提交 {pushed}，网页写回 {pulled}，无需处理 {same}，冲突 {conflict}。"
+          .format(**results))
+    return 1 if unresolved else 0
+
+
+def revision_command(cfg, dirs):
+    args = sys.argv[2:]
+    action = args[0] if args else "status"
+    if action == "start":
+        if len(args) < 2:
+            print("用法：watcher_client.py revision start 营救麦克黄 [更多书或文件]")
+            return 1
+        return start_revision(cfg, dirs, args[1:])
+    if action == "finish":
+        return finish_revision(cfg, dirs)
+    if action == "status":
+        revision = load_revision()
+        print(f"修订锁：{len(revision['files'])} 个文件"
+              + (f"（开始于 {revision.get('startedAt')}）" if revision["files"] else ""))
+        for name in revision["files"]:
+            print(f"- {name}")
+        return 0
+    print("可用命令：revision start / finish / status")
+    return 1
+
+
 def main():
     cfg = load_config()
+    dirs = normalize_dirs(cfg)
+    if len(sys.argv) > 1 and sys.argv[1] == "revision":
+        sys.exit(revision_command(cfg, dirs))
     state = load_state()
     once = "--once" in sys.argv
-    dirs = normalize_dirs(cfg)
     log("开始同步 " + "、".join(f"{p}" + (f"→《{b}》" if b else "") for p, b in dirs))
 
     last_pull = 0.0
