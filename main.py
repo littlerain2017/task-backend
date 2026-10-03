@@ -250,16 +250,56 @@ WRITING_TOKEN_RE = re.compile(r"^[A-Za-z0-9\-]{4,64}$")
 
 
 async def writing_uid_from_token(token: str) -> str:
-    """令牌 → openid。畸形令牌或云端异常一律返回空串，绝不抛异常。"""
+    """令牌 → uid。畸形令牌或云端异常一律返回空串，绝不抛异常。
+
+    两种身份共存，uid 只是一个字符串 key，数据层不关心它从哪来：
+      · 微信小程序：devices 集合，`_openid` 由微信自动附加（作者本人走这条）
+      · 自建账户：accounts 集合，`_id` 就是 uid（形如 acct-xxxx）
+    先查 devices，查不到再查 accounts——作者本人因此只有一次查询。
+    """
     if not WRITING_TOKEN_RE.match(token or ""):
         return ""
     try:
         q = f'db.collection("devices").where({{token:{json.dumps(token)}}}).limit(1).get()'
         rows = (await writing_db("databasequery", q)).get("data", [])
-        return json.loads(rows[0]).get("_openid", "") if rows else ""
+        if rows:
+            return json.loads(rows[0]).get("_openid", "")
+        q2 = f'db.collection("accounts").where({{token:{json.dumps(token)}}}).limit(1).get()'
+        rows2 = (await writing_db("databasequery", q2)).get("data", [])
+        return json.loads(rows2[0]).get("_id", "") if rows2 else ""
     except RuntimeError as e:
         print(f"[writing] 令牌校验失败: {e}")
         return ""
+
+
+# ==================== 自建账户 ====================
+# 不做公开注册：账号由管理员用 /writing/admin/accounts 开，省掉一整套
+# 防滥用逻辑（验证码、频率限制、找回密码）。后端的云开发容量和 API 额度
+# 都是站长自费的，开放注册等于把账单交给陌生人。
+ADMIN_KEY = os.environ.get("WRITING_ADMIN_KEY", "").strip()
+PWD_ITERATIONS = 200_000
+DEFAULT_MAX_DOCS = 200          # 单账户文档数上限；单篇另有 DOC_MAX_CHARS 限制
+USERNAME_RE = re.compile(r"^[a-zA-Z0-9_\-.]{3,32}$")
+
+
+def pwd_hash(password: str, salt_hex: str) -> str:
+    return hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), bytes.fromhex(salt_hex), PWD_ITERATIONS
+    ).hex()
+
+
+async def writing_account_by_name(username: str):
+    q = (f'db.collection("accounts").where({{username:{json.dumps(username)}}})'
+         f'.limit(1).get()')
+    rows = (await writing_db("databasequery", q)).get("data", [])
+    return json.loads(rows[0]) if rows else None
+
+
+async def writing_account_by_uid(uid: str):
+    """自建账户才有记录；微信身份返回 None，于是不受配额限制。"""
+    if not uid.startswith("acct-"):
+        return None
+    return await writing_query_doc("accounts", uid)
 
 
 ACTIVE_MS_MAX_PER_REPORT = 30 * 60 * 1000  # 单次上报的写作时长上限，防异常值
@@ -296,6 +336,75 @@ async def writing_doc_metas(uid: str):
     field = '.field({name:true,updatedAt:true,editor:true,hash:true,cjk:true,en:true,readonly:true,marks:true})'
     q = f'db.collection("docs").where({{uid:{json.dumps(uid)}}}).limit(1000){field}.get()'
     return [json.loads(r) for r in (await writing_db("databasequery", q)).get("data", [])]
+
+
+class AuthLoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class AdminAccountRequest(BaseModel):
+    adminKey: str
+    username: str = ""
+    password: str = ""
+    maxDocs: int = 0
+
+
+@app.post("/writing/auth/login")
+async def writing_auth_login(req: AuthLoginRequest):
+    """用户名密码换长期令牌。令牌本身不过期——watcher 要长期挂着，
+    换票机制对它没意义；要作废就由管理员重开账号。"""
+    try:
+        acct = await writing_account_by_name(req.username.strip())
+    except RuntimeError as e:
+        print(f"[writing] login 失败: {e}")
+        return {"ok": False, "error": "服务器内部错误"}
+    # 用户名不存在和密码错误返回同一句，不泄露哪个账号存在
+    if not acct or not secrets.compare_digest(
+        pwd_hash(req.password, acct.get("salt", "00")), acct.get("pwd", "")
+    ):
+        return {"ok": False, "error": "用户名或密码不对"}
+    return {"ok": True, "token": acct.get("token", ""),
+            "maxDocs": acct.get("maxDocs", DEFAULT_MAX_DOCS)}
+
+
+@app.post("/writing/admin/accounts")
+async def writing_admin_accounts(req: AdminAccountRequest):
+    """开号。username 为空时只列出现有账号（不返回令牌与口令）。"""
+    if not ADMIN_KEY or not secrets.compare_digest(req.adminKey, ADMIN_KEY):
+        return {"ok": False, "error": "无权限"}
+    try:
+        if not req.username:
+            q = 'db.collection("accounts").limit(200).get()'
+            rows = (await writing_db("databasequery", q)).get("data", [])
+            accounts = [json.loads(r) for r in rows]
+            return {"ok": True, "accounts": [
+                {"uid": a.get("_id"), "username": a.get("username"),
+                 "maxDocs": a.get("maxDocs"), "createdAt": a.get("createdAt")}
+                for a in accounts]}
+        name = req.username.strip()
+        if not USERNAME_RE.match(name):
+            return {"ok": False, "error": "用户名只能是 3-32 位字母数字 _ - ."}
+        if len(req.password) < 8:
+            return {"ok": False, "error": "口令至少 8 位"}
+        if await writing_account_by_name(name):
+            return {"ok": False, "error": "用户名已存在"}
+        uid = "acct-" + secrets.token_urlsafe(8)
+        salt = secrets.token_hex(16)
+        token = "WRT-" + secrets.token_urlsafe(12)
+        await writing_upsert("accounts", uid, {
+            "username": name,
+            "salt": salt,
+            "pwd": pwd_hash(req.password, salt),
+            "token": token,
+            "maxDocs": req.maxDocs if req.maxDocs > 0 else DEFAULT_MAX_DOCS,
+            "createdAt": int(time_mod.time() * 1000),
+        })
+        return {"ok": True, "uid": uid, "username": name, "token": token,
+                "maxDocs": req.maxDocs if req.maxDocs > 0 else DEFAULT_MAX_DOCS}
+    except RuntimeError as e:
+        print(f"[writing] admin/accounts 失败: {e}")
+        return {"ok": False, "error": "服务器内部错误"}
 
 
 class DocsListRequest(BaseModel):
@@ -383,6 +492,17 @@ async def writing_docs_put(req: DocsPutRequest):
         existing = await writing_query_doc("docs", doc_id)
         if existing and existing.get("readonly") and req.editor == "web":
             return {"ok": False, "error": "该文件为只读（Word 文档请在电脑上编辑）"}
+        if existing is None:
+            # 只在新建时查配额：元信息是全量查询，不便宜，而新建远少于改写。
+            # 单篇体积另有 DOC_MAX_CHARS 兜着，所以限住篇数就够，不必再算总字节。
+            # 微信身份（作者本人）没有 accounts 记录，不受限。
+            acct = await writing_account_by_uid(uid)
+            if acct:
+                limit = acct.get("maxDocs", DEFAULT_MAX_DOCS)
+                used = len(await writing_doc_metas(uid))
+                if used >= limit:
+                    return {"ok": False,
+                            "error": f"文档数已达上限（{used}/{limit}），删掉一些或联系管理员提额"}
         # 这是一份多处同时编辑的文档（网页、电脑、AI 改稿），所以**改已存在的文件
         # 必须声明自己基于哪一版**。新建文件没有可覆盖的东西，不要求。
         #
