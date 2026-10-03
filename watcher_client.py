@@ -25,7 +25,10 @@ import zipfile
 from datetime import date, datetime
 from pathlib import Path
 
-SERVER = "https://web-production-e223e.up.railway.app"
+# 服务端地址。可以在 ~/.writing-watcher.json 里加 "server" 字段覆盖——
+# 哪天后端从 Railway 搬到自建机器，改配置里一个字段即可，不必重新分发本脚本。
+SERVER_DEFAULT = "https://web-production-e223e.up.railway.app"
+SERVER = SERVER_DEFAULT
 CONFIG_PATH = Path.home() / ".writing-watcher.json"
 STATE_PATH = Path.home() / ".writing-watcher-state.json"
 BACKUP_DIR = Path.home() / ".writing-watcher-backups"
@@ -214,11 +217,14 @@ def setup_config():
 
 
 def load_config():
+    global SERVER
     if "--reset" in sys.argv or not CONFIG_PATH.exists():
-        return setup_config()
-    cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    if "watch_dir" in cfg and "watch_dirs" not in cfg:
-        cfg["watch_dirs"] = [cfg["watch_dir"]]
+        cfg = setup_config()
+    else:
+        cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        if "watch_dir" in cfg and "watch_dirs" not in cfg:
+            cfg["watch_dirs"] = [cfg["watch_dir"]]
+    SERVER = (cfg.get("server") or SERVER_DEFAULT).rstrip("/")
     return cfg
 
 
