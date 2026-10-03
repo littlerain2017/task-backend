@@ -265,7 +265,10 @@ async def writing_uid_from_token(token: str) -> str:
         if rows:
             return json.loads(rows[0]).get("_openid", "")
         q2 = f'db.collection("accounts").where({{token:{json.dumps(token)}}}).limit(1).get()'
-        rows2 = (await writing_db("databasequery", q2)).get("data", [])
+        try:
+            rows2 = (await writing_db("databasequery", q2)).get("data", [])
+        except RuntimeError:
+            return ""   # accounts 还没建起来：此时只可能是微信身份，上面已经查过
         return json.loads(rows2[0]).get("_id", "") if rows2 else ""
     except RuntimeError as e:
         print(f"[writing] 令牌校验失败: {e}")
@@ -288,10 +291,28 @@ def pwd_hash(password: str, salt_hex: str) -> str:
     ).hex()
 
 
+async def writing_ensure_collection(name: str) -> None:
+    """确保集合存在。云开发的 databaseadd 对不存在的集合直接报错，而 accounts
+    只在第一次开号时才产生——不先建好，开号和登录都会撞 500。
+    已存在会返回错误码，忽略即可：真有问题的话紧随其后的那次写入会报出来。"""
+    token = await writing_access_token()
+    async with httpx.AsyncClient() as client:
+        await client.post(
+            f"https://api.weixin.qq.com/tcb/databasecollectionadd?access_token={token}",
+            json={"env": WRITING_ENV, "collection_name": name},
+        )
+
+
 async def writing_account_by_name(username: str):
     q = (f'db.collection("accounts").where({{username:{json.dumps(username)}}})'
          f'.limit(1).get()')
-    rows = (await writing_db("databasequery", q)).get("data", [])
+    try:
+        rows = (await writing_db("databasequery", q)).get("data", [])
+    except RuntimeError as e:
+        # 集合尚未创建，或云端暂时不可用。两种都按「查不到这个账号」处理，
+        # 免得把 500 暴露到登录界面上；真实原因留在日志里。
+        print(f"[writing] accounts 查询失败: {e}")
+        return None
     return json.loads(rows[0]) if rows else None
 
 
@@ -389,6 +410,7 @@ async def writing_admin_accounts(req: AdminAccountRequest):
             return {"ok": False, "error": "口令至少 8 位"}
         if await writing_account_by_name(name):
             return {"ok": False, "error": "用户名已存在"}
+        await writing_ensure_collection("accounts")
         uid = "acct-" + secrets.token_urlsafe(8)
         salt = secrets.token_hex(16)
         token = "WRT-" + secrets.token_urlsafe(12)
