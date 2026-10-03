@@ -36,7 +36,7 @@ grep -n "\.remove()\|editor\.innerHTML\|querySelectorAll\|node\.textContent =" w
 
 ## 作者的编辑不可被覆盖（两道机械护栏）
 
-她在 `/write` 上的改动会经 watcher 落到 `~/Documents/Books/`，因此**任何程序整文件覆盖
+她在 `/write` 上的改动会经 watcher 落到 `~/Writing/Books/`，因此**任何程序整文件覆盖
 那里的稿子，都等于删掉她刚写的东西**。2026-09-17 装了两道拦截：
 
 1. **写前拦截**：`~/.claude/settings.json` 的 PreToolUse 钩子跑 `~/.claude/hooks/guard-books-write.py`，
@@ -158,6 +158,31 @@ watcher 是单文件分发的（`/writing/watcher.py`），不能 import，所�
 - `_` 开头的**目录**：完全不同步到云端（`_archive/` `_tools/`）
 - `_` 开头的**文件**：同步但**不计写作字数**（`_advisor.md` `_conflicts.md`）
 - `CLAUDE.md` / `AGENTS.md` / `README.md`：不同步
+
+## 两种身份：微信 vs 自建账户（2026-10-03）
+
+`writing_uid_from_token` 把 uid 只当字符串 key，**从不校验它是不是真的微信 openid**——
+整个数据层（`docs/*` 全部按 uid 过滤）因此本来就是多账户就绪的，加账户没动数据层。
+
+| | 存哪 | uid 从哪来 | 配额 |
+|---|---|---|---|
+| 微信小程序（作者本人） | `devices`，`_openid` 由微信附加 | `_openid` | 不受限 |
+| 自建账户（别人） | `accounts`，`_id` 即 uid（`acct-xxxx`） | `_id` | `maxDocs`，默认 200 |
+
+鉴权先查 `devices` 再查 `accounts`，所以作者本人仍只有一次查询。
+
+- **没有公开注册**，只有 `POST /writing/admin/accounts`（凭 `WRITING_ADMIN_KEY`，
+  传 `username` 开号、不传则列号）。理由：云开发容量与 API 额度都是站长自费的，
+  开放注册等于把账单交给陌生人，也省掉验证码／频率限制／找回口令一整套。
+  **`WRITING_ADMIN_KEY` 未配置时该端点一律拒绝**，不要改成"未配置则放行"。
+- `POST /writing/auth/login` 用户名口令换长期令牌。令牌不过期——watcher 要长期挂着，
+  换票对它没意义；要作废就重开账号。用户名不存在与口令错误返回**同一句**。
+- 口令 `pbkdf2_hmac-sha256` 20 万轮 + 16 字节 salt，比对走 `secrets.compare_digest`。
+- **配额只在新建文档时检查**（`existing is None` 那条分支）。元信息是全量查询，不便宜，
+  而新建远少于改写；单篇体积另有 `DOC_MAX_CHARS=200k` 兜着，所以限住篇数就够，
+  不必再算总字节。别挪到每次 put 都查。
+- 分享机制对多账户是安全的：`share_id = secrets.token_urlsafe(9)`，capability URL 模式，
+  不可枚举；`share/book` 凭 share_id 取到那条记录的 uid 再查章节，撞不到别人的书。
 
 ## 密钥
 
