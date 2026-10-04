@@ -25,6 +25,16 @@ class TestKeepSharedNotes(unittest.TestCase):
         text = "正文\n<!-- 批注 ✓ #a1b2 2026-09-11 09:00 | 回复 -->\n尾\n"
         self.assertEqual(keep_shared_notes(text), text)
 
+    def test_drops_ai_in_either_header_order(self):
+        for who in ("@codex", "@claude"):
+            for header in (f"✓ {who}", f"{who} ✓"):
+                text = f"正文\n<!-- 批注 {header} #flashback-order-1901-20261004 | 说明 -->\n尾"
+                self.assertEqual(keep_shared_notes(text), "正文\n尾")
+
+    def test_author_body_can_mention_codex(self):
+        text = "正文\n<!-- 批注 ✓ 2026-10-04 10:00 | @codex 已处理 -->\n尾"
+        self.assertEqual(keep_shared_notes(text), text)
+
     def test_undone_note_on_last_line(self):
         self.assertEqual(keep_shared_notes("正文\n<!-- 批注 2026-09-10 14:32 | x -->"), "正文\n")
 

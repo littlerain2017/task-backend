@@ -19,8 +19,9 @@ def strip_notes(text):
 NOTE_WHOLE_LINE_RE = re.compile(r"^[ \t]*<!--\s*批注\s.*?-->[ \t]*\n?", re.MULTILINE)
 
 # 批注格式：<!-- 批注 [@某人] [✓] [#线程号] 时间 | 正文 -->（与前端 NOTE_RE 同一套）。
-# 只认「批注」后面紧跟 ✓ 的——AI 写的批注 @claude 排在 ✓ 前面，因此自动落选。
+# 作者已处理批注以 ✓ 开头；兼容 ✓ @codex 顺序时仍须排除 AI。
 AUTHOR_DONE_NOTE_RE = re.compile(r"^[ \t]*<!--\s*批注\s*✓")
+NOTE_AUTHOR_RE = re.compile(r"(?:^|\s)@[\w-]+(?=\s|$)")
 
 
 def keep_shared_notes(text):
@@ -30,7 +31,8 @@ def keep_shared_notes(text):
     而且必须在服务端删，前端删的话原文照样过了网线。
     """
     return NOTE_WHOLE_LINE_RE.sub(
-        lambda m: m.group(0) if AUTHOR_DONE_NOTE_RE.match(m.group(0)) else "", text)
+        lambda m: m.group(0) if AUTHOR_DONE_NOTE_RE.match(m.group(0))
+        and not NOTE_AUTHOR_RE.search(m.group(0).split("|", 1)[0]) else "", text)
 
 
 def count_text(text):

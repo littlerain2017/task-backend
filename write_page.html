@@ -651,6 +651,29 @@
   #marksPanel .mp-item .bk { font-size: 11px; flex-shrink: 0; }
   #marksPanel .mp-empty { color: var(--muted); text-align: center; padding: 24px 8px; line-height: 1.9; }
 
+  /* 修改导航在编辑器外；高亮只加类名，不改变保存所依赖的节点。 */
+  #revisionPanel {
+    position: fixed; top: 64px; right: 16px; z-index: 35;
+    width: 360px; max-width: calc(100vw - 32px); max-height: 75vh;
+    display: none; background: var(--header);
+    border: 1px solid var(--gold-line); border-radius: 12px; padding: 14px;
+    color: var(--ink); font-size: 13px;
+  }
+  #revisionPanel.open { display: flex; flex-direction: column; }
+  #revisionPanel select { width: 100%; margin: 12px 0; padding: 8px;
+    background: var(--header); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; }
+  #revisionItems { overflow-y: auto; min-height: 0; }
+  #revisionPanel > :not(#revisionItems) { flex-shrink: 0; }
+  .revision-controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .revision-item { display: block; width: 100%; text-align: left; background: transparent;
+    color: var(--ink-soft); border: 0; border-bottom: 1px solid var(--line);
+    padding: 12px 6px; cursor: pointer; font: inherit; line-height: 1.6; }
+  .revision-item strong { display: block; color: var(--gold); }
+  .revision-item.active { background: var(--mark-fill); }
+  .revision-target { outline: 2px solid var(--gold); outline-offset: 4px; scroll-margin-top: 90px; }
+  #editor .note.my-note.revision-target .in-text { color: var(--ink); }
+  #revisionStatus { color: var(--muted); line-height: 1.7; margin: 12px 0; }
+
   /* ===== 科幻顾问面板 ===== */
   .ad-panel {
     position: fixed;
@@ -1010,6 +1033,7 @@
         <button class="cb-arrow next" id="nextDoc" onclick="gotoSibling(1)" title="下一章（⌘⇧&gt;）">›</button>
       </div>
       <div class="actions">
+        <button class="btn" id="revisionBtn" onclick="toggleRevisionPanel()" title="按轮次查看修改并跨章节跳转">本轮修改</button>
         <button class="btn" onclick="addNote()" title="给当前段落写一条批注（⌘/）">批注</button>
         <button class="btn" onclick="toggleMark()" title="标记/取消标记当前段落（⌘M），⌘⇧M 跳转书签">标记</button>
         <button class="btn" id="advisorBtn" onclick="toggleAdvisor()" title="科幻顾问：问设定 / 查冲突">顾问</button>
@@ -1062,6 +1086,18 @@
   <div class="fade"></div>
 
   <div id="marksPanel"></div>
+  <aside id="revisionPanel" aria-label="修改批次">
+    <div class="revision-controls"><strong>修改批次</strong><button class="btn" onclick="toggleRevisionPanel()" aria-label="关闭修改批次">×</button></div>
+    <select id="revisionBatch" aria-label="选择修改批次" onchange="selectRevisionBatch(this.value)"></select>
+    <div class="revision-controls">
+      <button class="btn" id="revisionPrev" onclick="stepRevision(-1)">上一处</button>
+      <span id="revisionPosition" aria-live="polite"></span>
+      <button class="btn" id="revisionNext" onclick="stepRevision(1)">下一处</button>
+    </div>
+    <p id="revisionStatus" role="status"></p>
+    <div id="revisionItems"></div>
+    <button class="btn" id="revisionRefresh" onclick="loadRevisionBatches()">刷新批次</button>
+  </aside>
 
   <div id="advisorPanel" class="ad-panel">
     <div class="ad-head">
@@ -1675,8 +1711,8 @@ function setEditorContent(text) {
   editor.innerHTML = "";
   const frag = document.createDocumentFragment();
   text.split("\n").forEach((lineText) => {
-    const m = lineText.match(NOTE_RE);
-    if (m) { frag.appendChild(buildMyNote(m[4], noteDecode(m[5]), !!m[2], m[1] || "", m[3] || "")); return; }
+    const note = parseNote(lineText);
+    if (note) { frag.appendChild(buildMyNote(note.stamp, note.text, note.done, note.who, note.tid, lineText)); return; }
     const div = document.createElement("div");
     div.className = ("line " + classify(lineText)).trim();
     if (lineText === "") div.appendChild(document.createElement("br"));
@@ -1699,7 +1735,7 @@ function setEditorContent(text) {
    紧跟在被批注的段落之后——**位置就是锚点**，改段落文字也不会丢。
    Markdown 渲染时不显示；写作字数统计会跳过（前端 counts / 后端 count_text 都剥掉）。
 
-   三个可选位，每个都有自己的前缀符号，所以顺序固定、互不吃字：
+   三个可选位，每个都有自己的前缀符号；兼容 @who / ✓ 两种顺序：
      @who   谁写的。省略＝作者自己（鎏金）；@claude＝AI（绿色）
      ✓      已处理
      #tid   线程号。同号且**相邻**的若干条渲染成一组对话
@@ -1710,9 +1746,22 @@ function setEditorContent(text) {
      <!-- 批注 @claude #7f3a 2026-09-14 10:30 | 这段节奏太快 -->
      <!-- 批注 #7f3a 2026-09-14 10:35 | 我觉得还行，保留 -->
 */
-// 分组：1=@谁 2=是否已处理 3=线程号 4=时间戳 5=正文
-const NOTE_RE = /^\s*<!--\s*批注\s*(@\S+)?\s*(✓)?\s*(?:#([0-9a-z]{4,8}))?\s*(.*?)\s*\|\s*([\s\S]*?)\s*-->\s*$/;
+// 兼容 ✓ / @who 的两种顺序，以及带连字符的长位置编号。
+const NOTE_RE = /^\s*<!--\s*批注\s+(.*?)\s*\|\s*([\s\S]*?)\s*-->\s*$/;
 const AI_WHO = "@claude";
+
+function parseNote(line) {
+  const m = line.match(NOTE_RE);
+  if (!m) return null;
+  let who = "", tid = "", done = false;
+  const stamp = m[1].split(/\s+/).filter(part => {
+    if (part === "✓") { done = true; return false; }
+    if (/^@[\w-]+$/.test(part) && !who) { who = part; return false; }
+    if (/^#[\w-]+$/.test(part) && !tid) { tid = part.slice(1); return false; }
+    return true;
+  }).join(" ");
+  return { who, tid, done, stamp, text: noteDecode(m[2]) };
+}
 
 function noteEncode(t) {
   return t.replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/-->/g, "--\\>");
@@ -1744,9 +1793,15 @@ function getEditorContent() {
       if (node.classList.contains("my-note")) {
         const t = node.querySelector(".in-text");
         const body = t ? t.innerText.trim() : "";
-        if (body) lines.push(noteLine(node.dataset.stamp || "", body,
-                                     node.classList.contains("done"),
-                                     node.dataset.who || "", node.dataset.tid || ""));
+        if (body) {
+          const stamp = node.dataset.stamp || "", who = node.dataset.who || "", tid = node.dataset.tid || "";
+          const done = node.classList.contains("done");
+          const original = node.dataset.rawLine && parseNote(node.dataset.rawLine);
+          // 查看、跳转、保存其他段落时，未改的旧批注逐字保留（含 ✓ @codex 顺序）。
+          lines.push(original && original.text.trim() === body && original.stamp === stamp &&
+            original.who === who && original.tid === tid && original.done === done
+            ? node.dataset.rawLine : noteLine(stamp, body, done, who, tid));
+        }
       }
       return;
     }
@@ -1849,7 +1904,8 @@ function countNotes(text) {
 }
 
 function stripNotes(text) {
-  return text.split("\n").filter((l) => !NOTE_RE.test(l)).join("\n");
+  // 与 writing_logic.NOTE_LINE_RE 一致，包括没有可解析头部的旧批注。
+  return text.replace(/^[ \t]*<!--\s*批注\s.*?-->[ \t]*$/gm, "");
 }
 
 /** 净稿字数：剥掉批注，再剥掉已划删除线的内容——那些是准备删的，不算成稿。
@@ -1962,6 +2018,185 @@ function renderSelect() {
 /* ===== 上一章 / 下一章：只在当前这本书里前后翻，顺序与下拉一致 ===== */
 function bookDocs() {
   return docList.filter((d) => bookOf(d.name) === currentBook);
+}
+
+/* ===== 修改批次 =====
+   新轮次的批注用 #batch-YYYYMMDD-轮次--位置（例如 #batch-20261004-02--1901）。
+   可在说明第一行加「【批次：标题】」。同轮各章共用日期与轮次，位置号各自唯一。
+   旧 #flashback-…-YYYYMMDD 兼容为独立主题批次；不把同日其他批注混进来。
+   元数据随批注存在稿件里，换设备仍可发现，不另外写文档或占配额。 */
+function revisionBatchFor(note) {
+  const explicit = note.tid.match(/^batch-(\d{8})-([\w-]+?)--[\w-]+$/);
+  const legacy = note.tid.match(/^flashback-[\w-]+-(\d{8})$/);
+  if (!explicit && !legacy) return null;
+  if (note.who !== "@codex" && note.who !== "@claude") return null;
+  const date = (explicit || legacy)[1];
+  const title = note.text.match(/^【批次：([^】]+)】/);
+  const round = explicit ? explicit[2] : "flashback";
+  return {
+    id: `${date}-${round}`, date, round: explicit ? round : "0",
+    label: `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6)} · ${explicit
+      ? (title ? title[1] : `第 ${round} 轮`) : "闪回顺序与压缩"}`,
+  };
+}
+
+function revisionEntries(name, content) {
+  const entries = [];
+  let scene = "", ordinal = 0;
+  for (const line of content.split("\n")) {
+    const heading = line.match(/^\s*(?:#{1,6}\s*)?(\d{2,3}-\d{2,3})(?=\s|$)/);
+    if (heading) scene = heading[1];
+    const note = parseNote(line);
+    if (!note) continue;
+    const index = ordinal++;
+    const batch = revisionBatchFor(note);
+    if (!batch) continue;
+    entries.push({ name, scene, index, ...note, batch,
+      summary: note.text.replace(/^【批次：[^】]+】\s*/, "") });
+  }
+  return entries;
+}
+
+let revisionBatches = [], revisionSelected = "", revisionIndex = -1;
+let revisionBook = null, revisionLoading = false, revisionJumping = false;
+
+async function toggleRevisionPanel() {
+  const panel = $("revisionPanel");
+  if (panel.classList.contains("open")) { panel.classList.remove("open"); return; }
+  panel.classList.add("open");
+  $("marksPanel").classList.remove("open");
+  await loadRevisionBatches();
+}
+
+async function loadRevisionBatches() {
+  if (revisionLoading) return;
+  if (!current) { $("revisionStatus").textContent = "先打开一本书的章节。"; return; }
+  revisionLoading = true;
+  const book = currentBook;
+  $("revisionRefresh").disabled = true;
+  $("revisionStatus").textContent = "正在查找这本书的修改批次…";
+  renderRevisionNavigation();
+  try {
+    await loadList();
+    const docs = docList.filter(d => bookOf(d.name) === book && !d.readonly);
+    const results = new Array(docs.length);
+    let cursor = 0;
+    // 限制并发，结果仍按章节列表排列。当前章直接读 DOM，包含尚未保存的输入。
+    const workers = await Promise.allSettled(Array.from({ length: Math.min(4, docs.length) }, async () => {
+      while (cursor < docs.length) {
+        const i = cursor++, name = docs[i].name;
+        const data = current && current.name === name
+          ? { ok: true, content: getEditorContent() }
+          : await api("/writing/docs/get", { name });
+        if (!data.ok) throw new Error(`${fileLabel(name)}：${data.error || "读取失败"}`);
+        results[i] = revisionEntries(name, data.content);
+      }
+    }));
+    const failed = workers.find(result => result.status === "rejected");
+    if (failed) throw failed.reason;
+    if (currentBook !== book) throw new Error("已切换书籍，请刷新批次。");
+    const groups = new Map();
+    results.flat().forEach(entry => {
+      if (!groups.has(entry.batch.id)) groups.set(entry.batch.id, { ...entry.batch, entries: [] });
+      groups.get(entry.batch.id).entries.push(entry);
+    });
+    revisionBatches = [...groups.values()].sort((a, b) => b.date.localeCompare(a.date) ||
+      b.round.localeCompare(a.round, undefined, { numeric: true }));
+    if (revisionBook !== book || !groups.has(revisionSelected)) {
+      revisionSelected = revisionBatches[0]?.id || "";
+    }
+    revisionBook = book;
+    revisionIndex = -1;
+    const select = $("revisionBatch");
+    select.replaceChildren();
+    revisionBatches.forEach(batch => {
+      const option = document.createElement("option");
+      option.value = batch.id;
+      option.textContent = `${batch.label}（${batch.entries.length} 处）`;
+      select.appendChild(option);
+    });
+    select.value = revisionSelected;
+    renderRevisionItems();
+    $("revisionStatus").textContent = revisionBatches.length
+      ? "点场次查看改后正文与旁边的修改说明。" : "这本书还没有带批次编号的修改。";
+  } catch (e) {
+    revisionBatches = []; revisionSelected = ""; revisionIndex = -1; revisionBook = null;
+    $("revisionBatch").replaceChildren(); $("revisionItems").replaceChildren();
+    $("revisionStatus").textContent = `批次读取失败：${e.message} 可点刷新重试。`;
+  } finally {
+    revisionLoading = false;
+    $("revisionRefresh").disabled = false;
+    renderRevisionNavigation();
+  }
+}
+
+function selectedRevisionEntries() {
+  return revisionBatches.find(b => b.id === revisionSelected)?.entries || [];
+}
+
+function selectRevisionBatch(id) {
+  revisionSelected = id; revisionIndex = -1;
+  renderRevisionItems(); renderRevisionNavigation();
+}
+
+function renderRevisionItems() {
+  const list = $("revisionItems");
+  list.replaceChildren();
+  selectedRevisionEntries().forEach((entry, i) => {
+    const button = document.createElement("button");
+    button.className = "revision-item" + (i === revisionIndex ? " active" : "");
+    const heading = document.createElement("strong");
+    heading.textContent = `${fileLabel(entry.name)} · ${entry.scene || "修改说明"}`;
+    button.appendChild(heading);
+    button.appendChild(document.createTextNode(entry.summary));
+    button.onclick = () => gotoRevision(i);
+    list.appendChild(button);
+  });
+}
+
+function renderRevisionNavigation() {
+  const total = selectedRevisionEntries().length;
+  const unavailable = revisionLoading || revisionJumping || revisionBook !== currentBook;
+  $("revisionPosition").textContent = total ? `${revisionIndex + 1} / ${total} 处` : "0 处";
+  $("revisionPrev").disabled = unavailable || revisionIndex <= 0;
+  $("revisionNext").disabled = unavailable || revisionIndex >= total - 1 || !total;
+  $("revisionBatch").disabled = revisionLoading || revisionJumping || !total;
+}
+
+async function stepRevision(delta) {
+  await gotoRevision(revisionIndex < 0 ? 0 : revisionIndex + delta);
+}
+
+async function gotoRevision(index) {
+  const entry = selectedRevisionEntries()[index];
+  if (!entry || revisionLoading || revisionJumping) return;
+  if (revisionBook !== currentBook) {
+    $("revisionStatus").textContent = "已切换书籍，请刷新批次。"; return;
+  }
+  revisionJumping = true; renderRevisionNavigation();
+  try {
+    if (current && current.name !== entry.name) {
+      if (dirty) await save();
+      if (dirty) throw new Error("当前编辑还未保存成功，请稍后再跳转。");
+      await openDoc(entry.name);
+    }
+    if (!current || current.name !== entry.name) throw new Error("章节未能打开。");
+    const notes = [...editor.querySelectorAll(".my-note")];
+    // 优先按唯一编号定位；线程回复共享编号时用说明消歧。删掉的批注绝不跳到别处。
+    const target = notes.find(n => n.dataset.tid === entry.tid && n.dataset.who === entry.who &&
+      n.querySelector(".in-text")?.innerText.trim() === entry.text.trim());
+    if (!target) throw new Error("这处批注已修改或删除，请刷新批次。");
+    editor.querySelectorAll(".revision-target").forEach(n => n.classList.remove("revision-target"));
+    target.classList.add("revision-target");
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    revisionIndex = index;
+    $("revisionStatus").textContent = `${entry.scene || fileLabel(entry.name)} · ${entry.summary}`;
+    renderRevisionItems();
+  } catch (e) {
+    $("revisionStatus").textContent = e.message;
+  } finally {
+    revisionJumping = false; renderRevisionNavigation();
+  }
 }
 
 function siblingDoc(delta) {
@@ -2244,22 +2479,26 @@ async function openDoc(name) {
   renderCounts();
   renderSelect();
   setSync(data.readonly ? "只读（Word 文档请在电脑上编辑）" : "已就绪", "ok");
+  if ($("revisionPanel").classList.contains("open") && revisionBook !== currentBook && !revisionLoading) {
+    loadRevisionBatches();
+  }
   loadComments(name);
 }
 
 /* ===== 写进正文的批注（作者鎏金 / AI 绿色；位置即锚点） =====
    who 为空＝作者自己写的，可改正文；who=@claude＝AI 写的，正文只读但可勾选／删除／回复。
    tid 相同且相邻的若干条，由 groupThreads() 连成一组对话。 */
-function buildMyNote(stamp, text, done, who, tid) {
-  const ai = who === AI_WHO;
+function buildMyNote(stamp, text, done, who, tid, rawLine) {
+  const ai = who === AI_WHO || who === "@codex";
   const div = document.createElement("div");
   div.className = "note my-note" + (ai ? " ai-note" : "") + (done ? " done" : "");
   div.contentEditable = "false";          // 外壳不可编辑，只有 .in-text 是编辑岛
-  div.dataset.stamp = stamp || noteStamp(new Date());
+  div.dataset.stamp = stamp || (rawLine ? "" : noteStamp(new Date()));
+  if (rawLine) div.dataset.rawLine = rawLine;
   if (who) div.dataset.who = who;
   if (tid) div.dataset.tid = tid;
   div.innerHTML = `<span class="in-tick" title="标记为已处理／未处理">${done ? "✓" : "○"}</span>
-    <span class="in-head">${ai ? "Claude" : "批注"} · ${escapeHtml(div.dataset.stamp)}</span>
+    <span class="in-head">${ai ? (who === "@codex" ? "Codex" : "Claude") : "批注"} · ${escapeHtml(div.dataset.stamp)}</span>
     <span class="in-reply" title="回复这条批注">↩</span>
     <span class="in-del" title="删除这条批注">×</span>
     <div class="in-text"></div>`;
@@ -3221,8 +3460,8 @@ let refBusy = false;
 function collectNotes(text) {
   const out = [];
   for (const line of text.split("\n")) {
-    const m = line.match(NOTE_RE);
-    if (m && !m[2] && m[5]) out.push(noteDecode(m[5]));
+    const note = parseNote(line);
+    if (note && !note.done && !note.who && note.text) out.push(note.text);
   }
   return out.join("\n---\n");
 }

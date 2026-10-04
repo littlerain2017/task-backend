@@ -145,6 +145,18 @@ watcher 是单文件分发的（`/writing/watcher.py`），不能 import，所�
 
 ## 部署与验证
 
+### Revision batch navigation
+
+- The "本轮修改" panel discovers batches from inline AI annotations in the current book.
+- New rounds use a unique `#batch-YYYYMMDD-NN--location` identifier per change.
+  Date and round are shared across chapters; location identifies the individual change.
+- Optionally begin each annotation body with `【批次：Round title】` to name the round.
+- Existing `#flashback-...-YYYYMMDD` annotations are a separate legacy flashback batch.
+- Keep batch data inside existing annotations. Navigation must not write manuscript
+  content, remove editor nodes, or merge unrelated rounds by date alone.
+- Run `node test_revision_batches.js` with Playwright available in `NODE_PATH`.
+  Set `CHROMIUM_EXECUTABLE_PATH` when using an existing compatible Chromium binary.
+
 - push 到 main 即部署，约 25 秒
 - `/write` `/read` 已设 `no-cache`。**在此之前没有缓存头，导致多次"部署了却看不到效果"被误判成代码 bug**
 - 验证部署用 `curl -s .../write | grep <新符号>`，但**这只能证明代码上线，证明不了页面表现对**
