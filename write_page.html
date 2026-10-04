@@ -989,6 +989,7 @@
 
   @media (max-width: 560px) {
     .header-inner { padding: 12px 14px; gap: 8px; }
+    .actions { flex-wrap: wrap; max-width: 100%; }
     .wordmark { font-size: 15px; letter-spacing: 0.22em; }
     .btn { padding: 7px 10px; font-size: 12.5px; }
     .meta { padding: 16px 16px 0; }
@@ -2060,10 +2061,20 @@ function revisionEntries(name, content) {
 let revisionBatches = [], revisionSelected = "", revisionIndex = -1;
 let revisionBook = null, revisionLoading = false, revisionJumping = false;
 
+function positionRevisionPanel() {
+  const top = document.querySelector("header").getBoundingClientRect().bottom + 8;
+  $("revisionPanel").style.top = `${top}px`;
+  $("revisionPanel").style.maxHeight = `${Math.max(120, window.innerHeight - top - 16)}px`;
+}
+window.addEventListener("resize", () => {
+  if ($("revisionPanel").classList.contains("open")) positionRevisionPanel();
+});
+
 async function toggleRevisionPanel() {
   const panel = $("revisionPanel");
   if (panel.classList.contains("open")) { panel.classList.remove("open"); return; }
   panel.classList.add("open");
+  positionRevisionPanel();
   $("marksPanel").classList.remove("open");
   await loadRevisionBatches();
 }

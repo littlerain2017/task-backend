@@ -83,6 +83,12 @@ async function main() {
     assert.ok(docs[first].includes(oldNote), '原批注格式须逐字保留');
     assert.equal(await page.evaluate(() => stripNotes('正文\n<!-- 批注 旧批注 -->\n尾')), '正文\n\n尾');
     assert.equal(await page.evaluate(() => collectNotes('<!-- 批注 ✓ @codex #flashback-a-20261004 | 完成 -->\n<!-- 批注 2026-10-04 | 作者待办 -->')), '作者待办');
+    // 作者回复沿用长线程编号，分享页仍正确显示时间和正文。
+    const readHtml = fs.readFileSync(__dirname + '/read_page.html', 'utf8');
+    const sharedNoteRegex = new Function(readHtml.match(/const NOTE_RE = [^\n]+/)[0] + '; return NOTE_RE;')();
+    const sharedNote = sharedNoteRegex.exec('<!-- 批注 ✓ #batch-20261004-02--1901 2026-10-04 16:00 | 作者回复 -->');
+    assert.equal(sharedNote[4], '2026-10-04 16:00');
+    assert.equal(sharedNote[5], '作者回复');
     await page.evaluate(name => openDoc(name), first);
     rejectRead = true;
     await page.getByRole('button', { name: '刷新批次', exact: true }).click();
@@ -96,6 +102,12 @@ async function main() {
     await page.waitForFunction(() => !revisionLoading && revisionBook === '另一书');
     assert.equal(await page.locator('#revisionItems button').count(), 1);
     assert.match(await page.locator('#revisionItems').innerText(), /另一书的修改/);
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await page.locator('#revisionNext').isVisible(), true);
+    const overflow = await page.evaluate(() => [...document.querySelectorAll('body *')].filter(el => {
+      const rect = el.getBoundingClientRect(); return rect.width && (rect.right > window.innerWidth + 1 || rect.left < -1);
+    }).map(el => ({ tag: el.tagName, id: el.id, className: el.className, width: el.getBoundingClientRect().width })));
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), '手机不能横向溢出: ' + JSON.stringify(overflow));
     assert.deepEqual(errors, []);
     console.log('PASS: 批次分组、跨章跳转、原文保留、保存失败保护、读取恢复、书籍隔离');
   } finally { await browser.close(); }
