@@ -20,9 +20,11 @@ async function main() {
     let rejectSave = false, rejectRead = false;
     page.on('pageerror', error => errors.push(error.message));
     await page.addInitScript(first => {
-      localStorage.setItem('writing_token', 'test-only-token');
-      localStorage.setItem('writing_book', '测试书');
-      localStorage.setItem('writing_last_doc', first);
+      if (!localStorage.getItem('writing_token')) {
+        localStorage.setItem('writing_token', 'test-only-token');
+        localStorage.setItem('writing_book', '测试书');
+        localStorage.setItem('writing_last_doc', first);
+      }
     }, first);
     await page.route('**/*', async route => {
       const url = new URL(route.request().url());
@@ -66,6 +68,24 @@ async function main() {
     await next.click();
     await page.waitForFunction(() => revisionIndex === 1 && !revisionJumping);
     assert.equal(await page.evaluate(() => current.name), second);
+    // 浏览器刷新：保持已展开面板、所选旧批次和当前修改位置。
+    await page.reload();
+    await page.waitForFunction(() => revisionIndex === 1 && !revisionJumping);
+    assert.equal(await page.locator('#revisionPanel').isVisible(), true);
+    assert.equal(await page.locator('#revisionBatch').inputValue(), '20261004-flashback');
+    assert.equal(await page.evaluate(() => current.name), second);
+    assert.match(await page.locator('.revision-target').innerText(), /流浪移到放狗后/);
+    assert.equal(writes.length, 0);
+    await page.getByRole('button', { name: '关闭修改批次', exact: true }).click();
+    await page.reload();
+    await page.waitForFunction(() => current !== null);
+    assert.equal(await page.locator('#revisionPanel').isVisible(), false);
+    await page.getByRole('button', { name: '本轮修改', exact: true }).click();
+    await page.waitForFunction(() => !revisionLoading && revisionBatches.length === 2);
+    await next.click();
+    await page.waitForFunction(() => revisionIndex === 0 && !revisionJumping);
+    await next.click();
+    await page.waitForFunction(() => revisionIndex === 1 && !revisionJumping);
     await prev.click();
     await page.waitForFunction(() => revisionIndex === 0 && !revisionJumping);
     assert.equal(writes.length, 0);

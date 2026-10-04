@@ -2061,6 +2061,40 @@ function revisionEntries(name, content) {
 let revisionBatches = [], revisionSelected = "", revisionIndex = -1;
 let revisionBook = null, revisionLoading = false, revisionJumping = false;
 
+function savedRevisionView(book) {
+  try {
+    return JSON.parse(localStorage.getItem("writing_revision_view:" + book) || "null");
+  } catch (e) { return null; }
+}
+
+function rememberRevisionView(preserveLocation = false) {
+  if (revisionBook !== currentBook) return;
+  const entry = selectedRevisionEntries()[revisionIndex];
+  const saved = savedRevisionView(currentBook);
+  try {
+    localStorage.setItem("writing_revision_view:" + currentBook, JSON.stringify({
+      open: $("revisionPanel").classList.contains("open"), batch: revisionSelected,
+      location: entry ? { name: entry.name, tid: entry.tid }
+        : preserveLocation && saved?.batch === revisionSelected ? saved.location : null,
+    }));
+  } catch (e) { /* 存储不可用时仍能正常查看；不影响正文保存。 */ }
+}
+
+async function restoreRevisionView() {
+  const view = savedRevisionView(currentBook);
+  const name = current?.name;
+  if (!view?.open) return;
+  $("revisionPanel").classList.add("open");
+  positionRevisionPanel();
+  await loadRevisionBatches();
+  // 用户可能在加载期间主动关闭面板。恢复不得把它再打开或强行翻章。
+  if (!$("revisionPanel").classList.contains("open") || !view.location ||
+      dirty || current?.name !== name) return;
+  const index = selectedRevisionEntries().findIndex(entry =>
+    entry.name === view.location.name && entry.tid === view.location.tid);
+  if (index >= 0) await gotoRevision(index);
+}
+
 function positionRevisionPanel() {
   const top = document.querySelector("header").getBoundingClientRect().bottom + 8;
   $("revisionPanel").style.top = `${top}px`;
@@ -2072,7 +2106,14 @@ window.addEventListener("resize", () => {
 
 async function toggleRevisionPanel() {
   const panel = $("revisionPanel");
-  if (panel.classList.contains("open")) { panel.classList.remove("open"); return; }
+  if (panel.classList.contains("open")) {
+    panel.classList.remove("open");
+    try {
+      localStorage.setItem("writing_revision_view:" + currentBook,
+        JSON.stringify({ ...savedRevisionView(currentBook), open: false }));
+    } catch (e) { /* 关闭面板仍然有效。 */ }
+    return;
+  }
   panel.classList.add("open");
   positionRevisionPanel();
   $("marksPanel").classList.remove("open");
@@ -2114,7 +2155,8 @@ async function loadRevisionBatches() {
     revisionBatches = [...groups.values()].sort((a, b) => b.date.localeCompare(a.date) ||
       b.round.localeCompare(a.round, undefined, { numeric: true }));
     if (revisionBook !== book || !groups.has(revisionSelected)) {
-      revisionSelected = revisionBatches[0]?.id || "";
+      const saved = savedRevisionView(book);
+      revisionSelected = saved && groups.has(saved.batch) ? saved.batch : revisionBatches[0]?.id || "";
     }
     revisionBook = book;
     revisionIndex = -1;
@@ -2130,6 +2172,7 @@ async function loadRevisionBatches() {
     renderRevisionItems();
     $("revisionStatus").textContent = revisionBatches.length
       ? "点场次查看改后正文与旁边的修改说明。" : "这本书还没有带批次编号的修改。";
+    rememberRevisionView(true);
   } catch (e) {
     revisionBatches = []; revisionSelected = ""; revisionIndex = -1; revisionBook = null;
     $("revisionBatch").replaceChildren(); $("revisionItems").replaceChildren();
@@ -2148,6 +2191,7 @@ function selectedRevisionEntries() {
 function selectRevisionBatch(id) {
   revisionSelected = id; revisionIndex = -1;
   renderRevisionItems(); renderRevisionNavigation();
+  rememberRevisionView();
 }
 
 function renderRevisionItems() {
@@ -2201,6 +2245,7 @@ async function gotoRevision(index) {
     target.classList.add("revision-target");
     target.scrollIntoView({ behavior: "smooth", block: "center" });
     revisionIndex = index;
+    rememberRevisionView();
     $("revisionStatus").textContent = `${entry.scene || fileLabel(entry.name)} · ${entry.summary}`;
     renderRevisionItems();
   } catch (e) {
@@ -3337,6 +3382,7 @@ async function boot() {
     if (last && docList.some((d) => d.name === last)) {
       await openDoc(last);
       jumpToLastEdit();   // 光标也回到上次落笔处（lastEditPos 本就存在 localStorage）
+      await restoreRevisionView();
       return;
     }
     renderShelfView();
