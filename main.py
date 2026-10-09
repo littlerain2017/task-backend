@@ -118,7 +118,7 @@ async def send_reminder(openid: str, tasks: str):
     payload = {
         "touser": openid,
         "template_id": TEMPLATE_ID,
-        "page": "pages/progress/progress",
+        "page": "pages/tasks/tasks",
         "data": {
             "phrase8": {"value": "请更新进度"},
             "thing4": {"value": task_summary}
